@@ -64,8 +64,10 @@ const DS5_OUTPUT_REPORT = {
 } as const;
 
 const DS5_VALID_FLAG0 = {
-  RIGHT_VIBRATION: 0x01,
-  LEFT_VIBRATION: 0x02,
+  // Rumble must enable both bits together (kernel hid-playstation.c semantics:
+  // COMPATIBLE_VIBRATION | HAPTICS_SELECT), not one bit per motor side.
+  COMPATIBLE_VIBRATION: 0x01,
+  HAPTICS_SELECT: 0x02,
   LEFT_TRIGGER: 0x04,
   RIGHT_TRIGGER: 0x08,
   HEADPHONE_VOLUME: 0x10,
@@ -628,17 +630,35 @@ export class DS5Controller extends BaseController {
         auto: DS5_TRIGGER_EFFECT_MODE.AUTO_TRIGGER,
         resistance: DS5_TRIGGER_EFFECT_MODE.RESISTANCE,
       };
+      const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(n)));
+      // Mode-specific parametrik (reference: daidr dualsense-tester TriggerEffect.vue):
+      // resistance → [start, force], auto → [frequency, force, start],
+      // single (trigger effect) → [start, end, force].
+      const params = (cfg: AdaptiveTriggerConfig): [number, number, number] => {
+        switch (cfg.mode) {
+          case 'resistance':
+            return [clamp(cfg.start), clamp(cfg.force), 0];
+          case 'auto':
+            return [clamp(cfg.frequency ?? 0), clamp(cfg.force), clamp(cfg.start)];
+          case 'single':
+            return [clamp(cfg.start), clamp(cfg.end), clamp(cfg.force)];
+          default:
+            return [0, 0, 0];
+        }
+      };
+      const [lp0, lp1, lp2] = params(left);
+      const [rp0, rp1, rp2] = params(right);
       const { validFlag0 } = this.currentOutputState;
       const outputStruct = new DS5OutputStruct({
         ...this.currentOutputState,
         adaptiveTriggerLeftMode: modeMap[left.mode],
-        adaptiveTriggerLeftParam0: left.start,
-        adaptiveTriggerLeftParam1: left.end,
-        adaptiveTriggerLeftParam2: left.force,
+        adaptiveTriggerLeftParam0: lp0,
+        adaptiveTriggerLeftParam1: lp1,
+        adaptiveTriggerLeftParam2: lp2,
         adaptiveTriggerRightMode: modeMap[right.mode],
-        adaptiveTriggerRightParam0: right.start,
-        adaptiveTriggerRightParam1: right.end,
-        adaptiveTriggerRightParam2: right.force,
+        adaptiveTriggerRightParam0: rp0,
+        adaptiveTriggerRightParam1: rp1,
+        adaptiveTriggerRightParam2: rp2,
         validFlag0: validFlag0 | DS5_VALID_FLAG0.LEFT_TRIGGER | DS5_VALID_FLAG0.RIGHT_TRIGGER,
       });
       await this.sendOutputReport(outputStruct.pack(), 'set adaptive trigger mode');
@@ -662,11 +682,12 @@ export class DS5Controller extends BaseController {
         ...this.currentOutputState,
         bcVibrationLeft: Math.max(0, Math.min(255, heavyLeft)),
         bcVibrationRight: Math.max(0, Math.min(255, lightRight)),
-        validFlag0: validFlag0 | DS5_VALID_FLAG0.LEFT_VIBRATION | DS5_VALID_FLAG0.RIGHT_VIBRATION,
+        validFlag0:
+          validFlag0 | DS5_VALID_FLAG0.COMPATIBLE_VIBRATION | DS5_VALID_FLAG0.HAPTICS_SELECT,
       });
       await this.sendOutputReport(outputStruct.pack(), 'set vibration');
       outputStruct.state.validFlag0 &= ~(
-        DS5_VALID_FLAG0.LEFT_VIBRATION | DS5_VALID_FLAG0.RIGHT_VIBRATION
+        DS5_VALID_FLAG0.COMPATIBLE_VIBRATION | DS5_VALID_FLAG0.HAPTICS_SELECT
       );
       this.updateCurrentOutputState(outputStruct);
       return { success: true, message: '' };

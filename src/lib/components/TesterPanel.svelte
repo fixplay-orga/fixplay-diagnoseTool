@@ -207,11 +207,20 @@
   async function applyTriggers(): Promise<void> {
     if (!manager) return;
     try {
-      const left: AdaptiveTriggerConfig = { mode: lMode, start: lStart, end: lEnd, force: lForce };
-      const right: AdaptiveTriggerConfig = { mode: rMode, start: rStart, end: rEnd, force: rForce };
-      // 'auto' uses frequency as start per the protocol (param0 = frequency).
-      if (lMode === 'auto') (left as { frequency?: number }).frequency = lFreq;
-      if (rMode === 'auto') (right as { frequency?: number }).frequency = rFreq;
+      const left: AdaptiveTriggerConfig = {
+        mode: lMode,
+        start: lStart,
+        end: lEnd,
+        force: lForce,
+        frequency: lFreq,
+      };
+      const right: AdaptiveTriggerConfig = {
+        mode: rMode,
+        start: rStart,
+        end: rEnd,
+        force: rForce,
+        frequency: rFreq,
+      };
       await manager.setAdaptiveTrigger(left, right);
       pushControllerLog(get(LL).tester.triggerLog({ l: lMode, r: rMode }), 'info');
     } catch (e) {
@@ -396,8 +405,8 @@
           start: m.start,
           end: m.end,
           force: m.force,
+          frequency: m.freq,
         };
-        if (m.freq !== undefined) (cfg as { frequency?: number }).frequency = m.freq;
         await manager.setAdaptiveTrigger(cfg, cfg);
         await sleep(1200);
       }

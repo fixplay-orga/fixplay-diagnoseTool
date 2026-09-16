@@ -62,6 +62,8 @@ export interface AdaptiveTriggerConfig {
   start: number;
   end: number;
   force: number;
+  /** Effect frequency (0..255), only meaningful for mode 'auto' (param0). */
+  frequency?: number;
 }
 
 // Minimal HIDInputReportEvent type (WebHID).

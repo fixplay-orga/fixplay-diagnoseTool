@@ -376,3 +376,52 @@ describe('_getInfo feature-report parsing', () => {
 
 // Keep tsc happy about the unused event type alias import in some configs.
 export type _UnusedHidEvent = HIDInputReportEvent;
+
+describe('adaptive trigger parametrik (#113)', () => {
+  // Byte layout (kernel/Ohjurot/nondebug): R2 trigger effect @10–20, L2 @21–31.
+  // setAdaptiveTrigger(left, right): first arg = LEFT trigger (offsets 21+),
+  // second arg = RIGHT trigger (offsets 10+).
+  it('resistance packs [start, force, 0]', async () => {
+    const device = makeFakeDevice();
+    const ctrl = new DS5Controller(device);
+    await ctrl.setAdaptiveTrigger(
+      { mode: 'resistance', start: 10, end: 255, force: 200 },
+      { mode: 'resistance', start: 20, end: 255, force: 210 }
+    );
+    const out = device.lastOut()!;
+    expect(out.data[10]).toBe(0x01); // mode RIGHT (R2 region) ← second arg
+    expect(out.data[11]).toBe(20); // param0 = start
+    expect(out.data[12]).toBe(210); // param1 = force
+    expect(out.data[13]).toBe(0); // resistance has no param2
+    expect(out.data[21]).toBe(0x01); // mode LEFT (L2 region) ← first arg
+    expect(out.data[22]).toBe(10);
+    expect(out.data[23]).toBe(200);
+    expect(out.data[24]).toBe(0);
+  });
+
+  it('auto packs [frequency, force, start] and clamps 0..255', async () => {
+    const device = makeFakeDevice();
+    const ctrl = new DS5Controller(device);
+    await ctrl.setAdaptiveTrigger(
+      { mode: 'auto', start: 30, end: 0, force: 400, frequency: 12 },
+      { mode: 'auto', start: 40, end: 0, force: 99, frequency: 7 }
+    );
+    const out = device.lastOut()!;
+    expect(out.data[11]).toBe(7); // R2 param0 = frequency
+    expect(out.data[12]).toBe(99);
+    expect(out.data[13]).toBe(40); // R2 param2 = start
+    expect(out.data[22]).toBe(12); // L2 param0 = frequency
+    expect(out.data[23]).toBe(255); // force clamped
+    expect(out.data[24]).toBe(30); // L2 param2 = start
+  });
+
+  it('setVibration sets COMPATIBLE_VIBRATION and HAPTICS_SELECT together', async () => {
+    const device = makeFakeDevice();
+    const ctrl = new DS5Controller(device);
+    await ctrl.setVibration(255, 0);
+    const out = device.lastOut()!;
+    expect(out.data[0] & 0x03).toBe(0x03); // beide Bits gemeinsam
+    expect(out.data[3]).toBe(255); // bcVibrationLeft = heavy
+    expect(out.data[2]).toBe(0); // bcVibrationRight = light
+  });
+});
