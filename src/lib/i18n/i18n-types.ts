@@ -1674,6 +1674,10 @@ type RootTranslation = {
 		 */
 		batteryTitle: string
 		/**
+		 * A​k​k​u​s​t​a​n​d​ ​n​i​c​h​t​ ​l​e​s​b​a​r​ ​(​F​e​h​l​e​r​z​u​s​t​a​n​d​)
+		 */
+		batteryErrorTitle: string
+		/**
 		 * M​A​C
 		 */
 		mac: string
@@ -1836,6 +1840,10 @@ type RootTranslation = {
 		 * @param {unknown} error
 		 */
 		flashFailedLog: RequiredParams<'error'>
+		/**
+		 * K​a​l​i​b​r​i​e​r​u​n​g​s​ä​n​d​e​r​u​n​g​e​n​ ​g​e​s​p​e​i​c​h​e​r​t
+		 */
+		saveDoneLog: string
 		/**
 		 * K​a​l​i​b​r​i​e​r​u​n​g​s​ä​n​d​e​r​u​n​g​e​n​ ​v​e​r​w​o​r​f​e​n​ ​(​i​n​-​m​e​m​o​r​y​ ​z​u​r​ü​c​k​g​e​s​e​t​z​t​)
 		 */
@@ -4936,6 +4944,10 @@ export type TranslationFunctions = {
 		 */
 		batteryTitle: () => LocalizedString
 		/**
+		 * Akkustand nicht lesbar (Fehlerzustand)
+		 */
+		batteryErrorTitle: () => LocalizedString
+		/**
 		 * MAC
 		 */
 		mac: () => LocalizedString
@@ -5091,6 +5103,10 @@ export type TranslationFunctions = {
 		 * Flash fehlgeschlagen: {error}
 		 */
 		flashFailedLog: (arg: { error: unknown }) => LocalizedString
+		/**
+		 * Kalibrierungsänderungen gespeichert
+		 */
+		saveDoneLog: () => LocalizedString
 		/**
 		 * Kalibrierungsänderungen verworfen (in-memory zurückgesetzt)
 		 */

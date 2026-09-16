@@ -228,7 +228,7 @@
     if (!manager) return;
     try {
       const res = await manager.flash();
-      pushControllerLog(res.message, res.success ? 'info' : 'error');
+      pushControllerLog(res.success ? get(LL).controller.saveDoneLog() : res.message, res.success ? 'info' : 'error');
       // Persisting the in-memory changes makes them the new undo baseline.
       if (res.success) await snapshotCalibration();
     } catch (e) {
@@ -323,7 +323,8 @@
       </div>
       <div class="rounded-lg bg-gray-800/60 p-3" title={$LL.controller.batteryTitle()}>
         <div class="text-xs text-gray-500">{$LL.controller.battery()}</div>
-        <div class="flex items-center gap-1.5 text-sm font-medium text-gray-200">
+        <div class="flex items-center gap-1.5 text-sm font-medium { $batteryStatus.is_error ? 'text-red-400' : 'text-gray-200' }"
+          title={$batteryStatus.is_error ? $LL.controller.batteryErrorTitle() : $LL.controller.batteryTitle()}>
           <Battery class="h-4 w-4" />
           {$batteryStatus.bat_txt || '—'}
         </div>

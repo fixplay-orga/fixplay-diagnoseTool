@@ -787,6 +787,14 @@ export class DS5Controller extends BaseController {
         validFlag1: validFlag1 | DS5_VALID_FLAG1.PLAYER_INDICATOR,
       });
       await this.sendOutputReport(outputStruct.pack(), 'set player indicator');
+      // Legacy 0x20 output report for old boards (BDM-010/020) that drive their
+      // player LEDs from the dedicated report instead of the common one. Newer
+      // boards reject it harmlessly, so a failure here is NOT fatal.
+      try {
+        await this.device.sendReport(0x20, new Uint8Array([Math.max(0, Math.min(31, pattern))]));
+      } catch {
+        // ignore legacy report errors
+      }
       outputStruct.state.validFlag1 &= ~DS5_VALID_FLAG1.PLAYER_INDICATOR;
       this.updateCurrentOutputState(outputStruct);
       return { success: true, message: '' };

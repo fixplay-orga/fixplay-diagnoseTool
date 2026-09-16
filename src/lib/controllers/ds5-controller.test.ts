@@ -211,6 +211,17 @@ describe('connect baseline + battery 0xF (#112)', () => {
   });
 });
 
+describe('legacy 0x20 player-LED fallback (#114)', () => {
+  it('setPlayerIndicator additionally sends the legacy 0x20 report (old BDM boards)', async () => {
+    const device = makeFakeDevice();
+    const ctrl = new DS5Controller(device);
+    await ctrl.setPlayerIndicator(0b01010);
+    const legacy = device.sent.find((s: { reportId: number }) => s.reportId === 0x20);
+    expect(legacy).toBeDefined();
+    expect(legacy!.data[0]).toBe(0b01010);
+  });
+});
+
 describe('ControllerManager input parsing (transport-aware)', () => {
   function buildUsbReport(): Uint8Array {
     const r = new Uint8Array(64);
