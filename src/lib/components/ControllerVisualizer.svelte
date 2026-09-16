@@ -20,6 +20,7 @@
     batteryStatus,
     headphoneConnected,
   } from '$lib/stores/controller';
+  import { TOUCHPAD_WIDTH, TOUCHPAD_HEIGHT } from '$lib/controllers/touch-gesture';
 
   let { size = 460 }: { size?: number } = $props();
 
@@ -80,8 +81,9 @@
   function touchDot(i: number): { x: number; y: number; active: boolean } | null {
     const p = $touchPoints[i];
     if (!p || !p.active) return null;
-    const x = TP.x + (p.x / 1919) * TP.w;
-    const y = TP.y + (p.y / 941) * TP.h;
+    // Pad is 1920×1080 raw (#125) — divide x by the max coord, y by the height.
+    const x = TP.x + (p.x / (TOUCHPAD_WIDTH - 1)) * TP.w;
+    const y = TP.y + (p.y / TOUCHPAD_HEIGHT) * TP.h;
     return { x, y, active: p.active };
   }
 </script>

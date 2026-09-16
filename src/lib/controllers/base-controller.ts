@@ -128,10 +128,6 @@ export abstract class BaseController {
     return 0;
   }
 
-  setInputReportHandler(handler: (event: HIDInputReportEvent) => void): void {
-    this.device.oninputreport = handler;
-  }
-
   allocReq(id: number, data: number[] = []): Uint8Array {
     const fr = this.device.collections[0]?.featureReports ?? [];
     const report = fr.find((e) => e.reportId === id)?.items?.[0];
@@ -247,9 +243,5 @@ export abstract class BaseController {
 
   async setLedBrightness(_percent = 100): Promise<{ success: boolean; message: string }> {
     return { success: true, message: 'This controller does not support LED brightness' };
-  }
-
-  getSupportedQuickTests(): string[] {
-    return ['usb', 'buttons', 'adaptive', 'haptic', 'lights', 'speaker', 'headphone', 'microphone'];
   }
 }

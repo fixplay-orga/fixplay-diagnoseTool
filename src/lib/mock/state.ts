@@ -69,9 +69,9 @@ export interface MockControllerInput {
   battery: number;
   charging: boolean;
   /** Simulated touchpad touch points (0..1, up to 2). {active,x,y} with x in
-   * 0..1919 and y in 0..941 raw pad coords — written into the DS5 input report
-   * at touchpad offset 32 so the touchpad gesture visualizer (#57) can be
-   * exercised in a browser. */
+   * 0..1919 and y in 0..1079 raw pad coords (pad is 1920×1080, #125) — written
+   * into the DS5 input report at touchpad offset 32 so the touchpad gesture
+   * visualizer (#57) can be exercised in a browser. */
   touchPoints: { active: boolean; x: number; y: number }[];
 }
 

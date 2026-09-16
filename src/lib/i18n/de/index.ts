@@ -973,6 +973,11 @@ const de: BaseTranslation = {
     newPort: 'Neuer Port (Mock)',
     newEntry: 'Neuer Fehlereintrag (Mock)',
   },
+  mic: {
+    micNoDevice: 'Kein DualSense-Mikrofon gefunden',
+    micDenied: 'Mikrofon-Zugriff verweigert — in den Systemeinstellungen erlauben',
+    micError: 'Mikrofon-Fehler: {error}',
+  },
 };
 
 export default de;

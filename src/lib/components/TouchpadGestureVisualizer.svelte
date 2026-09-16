@@ -6,7 +6,7 @@
   // TouchGestureTracker; this component only feeds it the `$touchPoints` store
   // and renders the result.
   import { touchPoints } from '$lib/stores/controller';
-  import { TouchGestureTracker } from '$lib/controllers/touch-gesture';
+  import { TouchGestureTracker, normalizeTouch } from '$lib/controllers/touch-gesture';
   import type { TouchGestureEvent, TouchContactLabel } from '$lib/controllers/touch-gesture';
   import { get } from 'svelte/store';
   import LL from '$lib/i18n/i18n-svelte';
@@ -15,12 +15,13 @@
 
   const tracker = new TouchGestureTracker();
 
-  // Normalize raw pad coords (x: 0..1919, y: 0..941) to 0..1 for rendering.
+  // Normalize raw pad coords (x: 0..1919, y: 0..1079) to 0..1 for rendering —
+  // same normalization as the gesture tracker (#125, pad is 1920×1080).
   function nx(p: { x: number }): number {
-    return p.x / 1919;
+    return normalizeTouch(p.x, 0).x;
   }
   function ny(p: { y: number }): number {
-    return p.y / 941;
+    return normalizeTouch(0, p.y).y;
   }
 
   // Live state mirrored from the tracker on each report.

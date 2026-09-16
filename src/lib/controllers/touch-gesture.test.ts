@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyLift, TouchGestureTracker } from './touch-gesture';
+import { classifyLift, normalizeTouch, TouchGestureTracker } from './touch-gesture';
 import type { TouchPoint } from './controller-manager';
 
 /** Build a TouchPoint (active by default) at raw pad coords. */
@@ -40,6 +40,14 @@ describe('classifyLift (#57)', () => {
   it('classifies a large upward travel as an up swipe', () => {
     const ev = classifyLift(400, 800, 410, 100, 150, 2000);
     expect(ev.direction).toBe('oben');
+  });
+});
+
+describe('normalizeTouch (#125)', () => {
+  it('normalizes touch y against the 1080-tall pad (#125)', () => {
+    expect(normalizeTouch(960, 540).y).toBeCloseTo(0.5);
+    expect(normalizeTouch(960, 1080).y).toBe(1); // bottom edge of the 1080-tall pad
+    expect(normalizeTouch(1919, 0).x).toBe(1); // right edge of the 1920-wide pad
   });
 });
 

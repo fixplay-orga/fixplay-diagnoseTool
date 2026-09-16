@@ -3489,6 +3489,21 @@ type RootTranslation = {
 		 */
 		newEntry: string
 	}
+	mic: {
+		/**
+		 * K​e​i​n​ ​D​u​a​l​S​e​n​s​e​-​M​i​k​r​o​f​o​n​ ​g​e​f​u​n​d​e​n
+		 */
+		micNoDevice: string
+		/**
+		 * M​i​k​r​o​f​o​n​-​Z​u​g​r​i​f​f​ ​v​e​r​w​e​i​g​e​r​t​ ​—​ ​i​n​ ​d​e​n​ ​S​y​s​t​e​m​e​i​n​s​t​e​l​l​u​n​g​e​n​ ​e​r​l​a​u​b​e​n
+		 */
+		micDenied: string
+		/**
+		 * M​i​k​r​o​f​o​n​-​F​e​h​l​e​r​:​ ​{​e​r​r​o​r​}
+		 * @param {unknown} error
+		 */
+		micError: RequiredParams<'error'>
+	}
 }
 
 export type TranslationFunctions = {
@@ -6826,6 +6841,20 @@ export type TranslationFunctions = {
 		 * Neuer Fehlereintrag (Mock)
 		 */
 		newEntry: () => LocalizedString
+	}
+	mic: {
+		/**
+		 * Kein DualSense-Mikrofon gefunden
+		 */
+		micNoDevice: () => LocalizedString
+		/**
+		 * Mikrofon-Zugriff verweigert — in den Systemeinstellungen erlauben
+		 */
+		micDenied: () => LocalizedString
+		/**
+		 * Mikrofon-Fehler: {error}
+		 */
+		micError: (arg: { error: unknown }) => LocalizedString
 	}
 }
 

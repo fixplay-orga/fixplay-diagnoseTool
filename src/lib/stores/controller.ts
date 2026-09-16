@@ -1,11 +1,7 @@
 // Svelte stores for controller state (connection, sticks, buttons, battery).
 import { writable } from 'svelte/store';
 import type { SticksState, TouchPoint, ProcessedInput } from '$lib/controllers/controller-manager';
-import type {
-  ControllerInfo,
-  NvStatus,
-  ControllerTransport,
-} from '$lib/controllers/base-controller';
+import type { ControllerInfo, ControllerTransport } from '$lib/controllers/base-controller';
 import type { TextLogEntry } from '$lib/api/types';
 import { createLogStore } from './log';
 import { createConnectionStore } from './connection';
@@ -14,8 +10,6 @@ import { createConnectionStore } from './connection';
 // matching the UART/I2C pattern.
 const _controllerConnection = createConnectionStore();
 export const controllerConnected = _controllerConnection.connected;
-/** Unified controller connection status (coarse lifecycle + booleans). */
-export const controllerConnection = _controllerConnection.status;
 export const controllerModel = writable<string | null>(null);
 /**
  * Active transport (USB vs BT), set by the ControllerPanel poll loop on every
@@ -25,8 +19,6 @@ export const controllerModel = writable<string | null>(null);
  */
 export const controllerTransport = writable<ControllerTransport>('usb');
 export const controllerInfo = writable<ControllerInfo | null>(null);
-export const controllerNvStatus = writable<NvStatus | null>(null);
-export const controllerHasChanges = writable<boolean>(false);
 
 export const stickState = writable<SticksState>({
   left: { x: 0, y: 0 },

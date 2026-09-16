@@ -1387,7 +1387,7 @@
                 <input
                   type="range"
                   min="0"
-                  max="941"
+                  max="1079"
                   value={$mockState.hid.input.touchPoints[fi]?.y ?? 0}
                   oninput={(e) => setTouch(fi, { y: num((e.target as HTMLInputElement).value) })}
                   class="flex-1 accent-teal-500"

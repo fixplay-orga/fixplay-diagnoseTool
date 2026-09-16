@@ -1,6 +1,6 @@
 // Touchpad gesture recognition for the DualSense (#57). The controller exposes
 // up to two touch points per input report (raw touchpad coords x: 0..1919,
-// y: 0..941, each with an `active` flag and a stable finger `id`). This module
+// y: 0..1079, each with an `active` flag and a stable finger `id`). This module
 // turns that low-level stream into discrete gesture events (tap / swipe /
 // hold / two-finger) plus a live "current contact" label, and keeps a short
 // per-finger position trail for the visualizer to render as a fading stroke.
@@ -30,7 +30,11 @@ export interface TouchGestureEvent {
 /** Live contact label (what the finger is doing right now). */
 export type TouchContactLabel = 'idle' | 'touch' | 'hold' | 'two-finger';
 
-// Recognition thresholds in raw touchpad units (pad is 1920×942) and ms.
+/** Touchpad is 1920×1080 (kernel hid-playstation.c dualsense_touch_report). */
+export const TOUCHPAD_WIDTH = 1920;
+export const TOUCHPAD_HEIGHT = 1080;
+
+// Recognition thresholds in raw touchpad units (pad is 1920×1080) and ms.
 const TAP_MAX_DISPLACEMENT = 80;
 const TAP_MAX_DURATION = 250;
 const HOLD_MIN_DURATION = 500;
@@ -82,6 +86,17 @@ export interface TrailPoint {
 }
 
 /**
+ * Normalize raw touchpad coords to 0..1 for rendering (#125). x divides by the
+ * max coord (1919, so the right edge maps to exactly 1) and y by the full pad
+ * height 1080 (so y=540 is the vertical center and the bottom edge 1079 maps
+ * to ~0.999). Exported as a pure function so the tracker and the visualizers
+ * share one normalization definition.
+ */
+export function normalizeTouch(x: number, y: number): TrailPoint {
+  return { x: x / (TOUCHPAD_WIDTH - 1), y: y / TOUCHPAD_HEIGHT };
+}
+
+/**
  * Stateful touchpad gesture tracker (#57). Feed it the current `TouchPoint[]`
  * from each input report plus a `now` timestamp; it accumulates per-finger
  * down/lift state, emits a `TouchGestureEvent` on each lift and on a
@@ -112,7 +127,7 @@ export class TouchGestureTracker {
   }
 
   private norm(x: number, y: number): TrailPoint {
-    return { x: x / 1919, y: y / 941 };
+    return normalizeTouch(x, y);
   }
 
   private appendTrail(finger: number, x: number, y: number): void {

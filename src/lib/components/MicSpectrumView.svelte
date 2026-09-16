@@ -7,6 +7,7 @@
   // mic diagnostics.
   import { MicOff } from 'lucide-svelte';
   import { onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import LL from '$lib/i18n/i18n-svelte';
 
   let { active = false }: { active?: boolean } = $props();
@@ -36,7 +37,7 @@
       );
       if (!mic) {
         deviceFound = false;
-        errorMsg = 'Kein DualSense-Mikrofon gefunden. Controller per USB verbinden.';
+        errorMsg = get(LL).mic.micNoDevice();
         return;
       }
       deviceFound = true;
@@ -98,9 +99,9 @@
       draw();
     } catch (e) {
       if (e instanceof DOMException && e.name === 'NotAllowedError') {
-        errorMsg = 'Mikrofon-Zugriff verweigert. Bitte in den Browser-Einstellungen erlauben.';
+        errorMsg = get(LL).mic.micDenied();
       } else {
-        errorMsg = 'Mikrofon-Fehler: ' + (e instanceof Error ? e.message : String(e));
+        errorMsg = get(LL).mic.micError({ error: e instanceof Error ? e.message : String(e) });
       }
     }
   }

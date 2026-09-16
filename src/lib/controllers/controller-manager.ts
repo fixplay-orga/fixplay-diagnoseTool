@@ -10,7 +10,6 @@ import type {
   NvStatus,
   AdaptiveTriggerConfig,
   HIDDeviceLike,
-  HIDInputReportEvent,
 } from './base-controller';
 import { validateBtInputCrc } from './crc32';
 import { sleep } from './utils';
@@ -158,11 +157,6 @@ export class ControllerManager {
     return this.currentController?.getFinetuneMaxValue() ?? null;
   }
 
-  setInputReportHandler(handler: ((event: HIDInputReportEvent) => void) | null): void {
-    if (!this.currentController) return;
-    this.currentController.getDevice().oninputreport = handler;
-  }
-
   async queryNvStatus(): Promise<NvStatus | null> {
     if (!this.currentController) return null;
     return await this.currentController.queryNvStatus();
@@ -180,10 +174,6 @@ export class ControllerManager {
 
   getModel(): string | null {
     return this.currentController?.getModel() ?? null;
-  }
-
-  getSupportedQuickTests(): string[] {
-    return this.currentController?.getSupportedQuickTests() ?? [];
   }
 
   isConnected(): boolean {
@@ -508,10 +498,6 @@ export class ControllerManager {
       imu,
     };
     this.inputHandler?.(result);
-  }
-
-  getInputHandler(): (event: HIDInputReportEvent) => void {
-    return this.processControllerInput.bind(this) as (event: HIDInputReportEvent) => void;
   }
 }
 

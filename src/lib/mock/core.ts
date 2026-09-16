@@ -94,13 +94,13 @@ function buildDs5InputReport(input: MockControllerInput): number[] {
   // Layout (mirrors ControllerManager._parseTouchPoints): byte0 = active flag
   // (bit7 set = NOT active) | finger id (low 7 bits); byte1 = x low;
   // byte2 = (x high nibble) | (y high nibble << 4); byte3 = y low.
-  // x: 0..1919 (12-bit), y: 0..941 (11-bit).
+  // x: 0..1919 (12-bit), y: 0..1079 (pad is 1920×1080, #125).
   const tp = input.touchPoints ?? [];
   for (let i = 0; i < 2; i++) {
     const p = tp[i] ?? { active: false, x: 0, y: 0 };
     const base = 32 + i * 4;
     const cx = Math.max(0, Math.min(1919, Math.round(p.x)));
-    const cy = Math.max(0, Math.min(941, Math.round(p.y)));
+    const cy = Math.max(0, Math.min(1079, Math.round(p.y)));
     r[base] = (p.active ? 0x00 : 0x80) | (i & 0x7f);
     r[base + 1] = cx & 0xff;
     r[base + 2] = ((cx >> 8) & 0x0f) | ((cy >> 4) & 0xf0);
