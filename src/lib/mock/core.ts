@@ -24,7 +24,7 @@ import type {
   I2cPollResult,
   I2cErrorSearchResult,
 } from '../api/types';
-import type { HidDeviceInfo, HidPollResult } from '../controllers/tauri-hid-device';
+import type { HidDeviceInfo, HidPollResult, HidDiagnostics } from '../controllers/tauri-hid-device';
 
 const warn = (cmd: string) =>
   console.warn(`[mock] invoke('${cmd}') has no fake handler — returning undefined`);
@@ -447,8 +447,18 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     return Array.from({ length: len }, (_, i) => i % 256);
   },
   hid_send_output_report: (args) => {
-    assertHidInjectable('hid-write');
     const data = (args?.data as number[] | undefined) ?? [];
+    if (getMockState().hid.injectErrors.includes('hid-write')) {
+      // Diagnostics parity (#124): the Rust layer counts a failed write in
+      // write_errors and records last_write_error.
+      mockHidRuntime.writeErrors += 1;
+      mockHidRuntime.lastWriteError = HID_INJECT_MESSAGES['hid-write'];
+      throw HID_INJECT_MESSAGES['hid-write'];
+    }
+    // A write was issued to the transport — counted even if the controller
+    // drops the frame afterwards (a CRC-invalid BT frame is dropped by the
+    // device, which is not a host-side write failure).
+    mockHidRuntime.writeCount += 1;
     // BT output frames: a real controller silently drops CRC-corrupt frames.
     if (data[0] === 0x31 && !btOutputCrcValid(data)) return;
     // Mirror the DS5 output report (report id 0x02, 47-byte common payload)
@@ -474,6 +484,20 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       connected: true,
       reports: [{ report_id: 1, data: buildDs5InputReport(s.hid.input) }],
       dropped_reports: 0,
+    };
+  },
+  // Diagnostics read (#124): same shape as the Rust `HidDiagnostics`. The
+  // write counters live in mockHidRuntime (see state.ts); connected/open_path
+  // mirror the persisted mock connection + the (only) mock device's path.
+  hid_diagnostics: () => {
+    const s = getMockState();
+    return <HidDiagnostics>{
+      connected: s.hid.connected,
+      open_path: s.hid.connected ? (s.hid.devices[0]?.path ?? null) : null,
+      write_count: mockHidRuntime.writeCount,
+      write_errors: mockHidRuntime.writeErrors,
+      dropped_reports: mockHidRuntime.droppedReports,
+      last_write_error: mockHidRuntime.lastWriteError,
     };
   },
 

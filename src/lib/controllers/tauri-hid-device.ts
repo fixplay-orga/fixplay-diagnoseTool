@@ -25,6 +25,21 @@ export interface HidPollResult {
 }
 
 /**
+ * Frontend-facing HID diagnostics (#124) — mirrors the Rust `HidDiagnostics`
+ * struct in `src-tauri/src/commands/hid.rs` (the wire authority): write
+ * statistics + the last write error + the open device path, for the repair
+ * diagnostics block in the controller panel.
+ */
+export interface HidDiagnostics {
+  connected: boolean;
+  open_path: string | null;
+  write_count: number;
+  write_errors: number;
+  dropped_reports: number;
+  last_write_error: string | null;
+}
+
+/**
  * Implements HIDDeviceLike via Rust hidapi backend instead of WebHID.
  * Mirrors the same protocol as WebHID so existing controller logic (DS5Controller, etc.)
  * works without modification.
@@ -90,4 +105,9 @@ export async function hidConnect(
 
 export async function hidListDevices(): Promise<HidDeviceInfo[]> {
   return invoke<HidDeviceInfo[]>('hid_list_devices');
+}
+
+/** Pure state read of the HID diagnostics counters (sync Rust command). */
+export async function hidDiagnostics(): Promise<HidDiagnostics> {
+  return invoke<HidDiagnostics>('hid_diagnostics');
 }

@@ -137,7 +137,12 @@ export class ControllerManager {
     this.transportStats = { reports: 0, seqGaps: 0, crcErrors: 0, lastSeq: null };
   }
 
-  getTransportStats(): { reports: number; seqGaps: number; crcErrors: number; lastSeq: number | null } {
+  getTransportStats(): {
+    reports: number;
+    seqGaps: number;
+    crcErrors: number;
+    lastSeq: number | null;
+  } {
     return { ...this.transportStats };
   }
 
@@ -508,6 +513,22 @@ export class ControllerManager {
   getInputHandler(): (event: HIDInputReportEvent) => void {
     return this.processControllerInput.bind(this) as (event: HIDInputReportEvent) => void;
   }
+}
+
+/**
+ * Radial stick deadzone for the on-screen visualizer only (#124). Takes the
+ * raw stick pair (-1..+1 per axis) and the deadzone in percent (0-20, the
+ * slider's range) and zeroes every pair whose deflection radius is strictly
+ * below the threshold (dz/100 of full deflection) — the visualizer dot then
+ * sits at center, matching the drawn deadzone disc. Pairs at or above the
+ * threshold pass through unchanged (no rescaling). Pure function; apply it to
+ * the DISPLAYED values only — protocol writes must always see the raw pair.
+ */
+export function applyDeadzone(x: number, y: number, dz: number): { x: number; y: number } {
+  if (dz <= 0) return { x, y };
+  const r = Math.hypot(x, y);
+  if (r < dz / 100) return { x: 0, y: 0 };
+  return { x, y };
 }
 
 export function createControllerForDevice(device: HIDDeviceLike): BaseController | null {

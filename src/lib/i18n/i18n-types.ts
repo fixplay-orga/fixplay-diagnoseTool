@@ -1874,6 +1874,59 @@ type RootTranslation = {
 		 * @param {unknown} error
 		 */
 		resetFailedLog: RequiredParams<'error'>
+		/**
+		 * U​S​B
+		 */
+		transportUsb: string
+		/**
+		 * B​T
+		 */
+		transportBt: string
+		/**
+		 * T​r​a​n​s​p​o​r​t​:​ ​{​t​r​a​n​s​p​o​r​t​}
+		 * @param {unknown} transport
+		 */
+		transportTitle: RequiredParams<'transport'>
+		/**
+		 * M​i​k​r​o​f​o​n​ ​v​e​r​b​u​n​d​e​n
+		 */
+		micBadge: string
+		/**
+		 * K​o​p​f​h​ö​r​e​r​ ​v​e​r​b​u​n​d​e​n
+		 */
+		headphoneBadge: string
+		/**
+		 * D​e​a​d​z​o​n​e
+		 */
+		deadzoneLabel: string
+		/**
+		 * R​a​d​i​a​l​e​ ​A​n​z​e​i​g​e​-​D​e​a​d​z​o​n​e​ ​(​0​–​2​0​ ​%​)​ ​—​ ​w​i​r​k​t​ ​n​u​r​ ​a​u​f​ ​d​e​n​ ​S​t​i​c​k​-​V​i​s​u​a​l​i​z​e​r​,​ ​n​i​c​h​t​ ​a​u​f​ ​P​r​o​t​o​k​o​l​l​-​W​r​i​t​e
+		 */
+		deadzoneTitle: string
+		/**
+		 * H​I​D​-​D​i​a​g​n​o​s​e
+		 */
+		diagnosticsTitle: string
+		/**
+		 * W​r​i​t​e​s
+		 */
+		diagWrites: string
+		/**
+		 * W​r​i​t​e​-​F​e​h​l​e​r
+		 */
+		diagWriteErrors: string
+		/**
+		 * V​e​r​w​o​r​f​e​n​e​ ​R​e​p​o​r​t​s
+		 */
+		diagDropped: string
+		/**
+		 * G​e​r​ä​t​e​p​f​a​d
+		 */
+		diagPath: string
+		/**
+		 * L​e​t​z​t​e​r​ ​W​r​i​t​e​-​F​e​h​l​e​r
+		 */
+		diagLastWriteError: string
 	}
 	calibration: {
 		/**
@@ -5206,6 +5259,58 @@ export type TranslationFunctions = {
 		 * Reset fehlgeschlagen: {error}
 		 */
 		resetFailedLog: (arg: { error: unknown }) => LocalizedString
+		/**
+		 * USB
+		 */
+		transportUsb: () => LocalizedString
+		/**
+		 * BT
+		 */
+		transportBt: () => LocalizedString
+		/**
+		 * Transport: {transport}
+		 */
+		transportTitle: (arg: { transport: unknown }) => LocalizedString
+		/**
+		 * Mikrofon verbunden
+		 */
+		micBadge: () => LocalizedString
+		/**
+		 * Kopfhörer verbunden
+		 */
+		headphoneBadge: () => LocalizedString
+		/**
+		 * Deadzone
+		 */
+		deadzoneLabel: () => LocalizedString
+		/**
+		 * Radiale Anzeige-Deadzone (0–20 %) — wirkt nur auf den Stick-Visualizer, nicht auf Protokoll-Write
+		 */
+		deadzoneTitle: () => LocalizedString
+		/**
+		 * HID-Diagnose
+		 */
+		diagnosticsTitle: () => LocalizedString
+		/**
+		 * Writes
+		 */
+		diagWrites: () => LocalizedString
+		/**
+		 * Write-Fehler
+		 */
+		diagWriteErrors: () => LocalizedString
+		/**
+		 * Verworfene Reports
+		 */
+		diagDropped: () => LocalizedString
+		/**
+		 * Gerätepfad
+		 */
+		diagPath: () => LocalizedString
+		/**
+		 * Letzter Write-Fehler
+		 */
+		diagLastWriteError: () => LocalizedString
 	}
 	calibration: {
 		/**

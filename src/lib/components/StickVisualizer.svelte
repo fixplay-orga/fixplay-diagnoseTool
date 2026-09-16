@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { stickState } from '$lib/stores/controller';
   import { drawStickDial } from '$lib/utils/stick-renderer';
+  import type { StickPosition } from '$lib/controllers/controller-manager';
 
   let {
     side = 'left' as 'left' | 'right',
@@ -9,12 +10,16 @@
     enableZoomCenter = false,
     circularityData = null as number[] | null,
     deadzone = 0,
+    // Optional pre-filtered stick pair (e.g. applyDeadzone output, #124).
+    // Falls back to the raw store value when omitted (CalibrationModal).
+    stick = null as StickPosition | null,
   }: {
     side?: 'left' | 'right';
     size?: number;
     enableZoomCenter?: boolean;
     circularityData?: number[] | null;
     deadzone?: number;
+    stick?: StickPosition | null;
   } = $props();
 
   let canvas: HTMLCanvasElement;
@@ -31,11 +36,11 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size, size);
 
-    const stick = $stickState[side];
+    const pos = stick ?? $stickState[side];
     const cx = size / 2;
     const cy = size / 2;
     const sz = size / 2 - 6;
-    drawStickDial(ctx, cx, cy, sz, stick.x, stick.y, {
+    drawStickDial(ctx, cx, cy, sz, pos.x, pos.y, {
       circularity_data: circularityData,
       enable_zoom_center: enableZoomCenter,
       deadzone,
@@ -54,10 +59,12 @@
     const _d = deadzone;
     const _c = circularityData;
     const _z = size;
+    const _p = stick;
     void _s;
     void _d;
     void _c;
     void _z;
+    void _p;
     render();
   });
 

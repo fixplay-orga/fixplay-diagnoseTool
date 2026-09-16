@@ -6,6 +6,10 @@
     Gamepad2,
     Usb,
     Battery,
+    BatteryCharging,
+    Bluetooth,
+    Mic,
+    Headphones,
     Activity,
     Wrench,
     Zap,
@@ -38,19 +42,23 @@
     controllerConnected,
     controllerModel,
     controllerInfo,
+    controllerTransport,
     batteryStatus,
     buttonState,
     triggerState,
     stickState,
     stickDeadzone,
+    setStickDeadzonePercent,
     stickCircularity,
     controllerLog,
     pushControllerLog,
     applyProcessedInput,
+    micConnected,
+    headphoneConnected,
   } from '$lib/stores/controller';
   import { invoke } from '@tauri-apps/api/core';
   import { DS5Controller } from '$lib/controllers/ds5-controller';
-  import type { ControllerTransport } from '$lib/controllers/base-controller';
+  import { applyDeadzone } from '$lib/controllers/controller-manager';
   import {
     createControllerManager,
     createControllerForDevice,
@@ -60,14 +68,13 @@
   import {
     hidConnect,
     hidListDevices,
+    hidDiagnostics,
     type HidPollResult,
     type HidDeviceInfo,
+    type HidDiagnostics,
   } from '$lib/controllers/tauri-hid-device';
 
   let manager = $state<ControllerManager | null>(null);
-  // Active transport (USB vs BT), refreshed on every poll so the quick-test
-  // modal can show/hide the BT connection test reactively.
-  let transport = $state<ControllerTransport>('usb');
   let calibOpen = $state(false);
   let circOpen = $state(false);
   let quickTestOpen = $state(false);
@@ -197,7 +204,7 @@
             const data = new DataView(new Uint8Array(report.data).buffer);
             manager?.processControllerInput({ data, reportId: report.report_id });
           }
-          transport = manager?.getTransport() ?? 'usb';
+          controllerTransport.set(manager?.getTransport() ?? 'usb');
         } catch {
           // ignore transient poll errors
         }
@@ -245,7 +252,7 @@
       await manager.disconnect();
       manager = null;
     }
-    transport = 'usb';
+    controllerTransport.set('usb');
     calibSnapshot = null;
     controllerConnected.set(false);
     controllerModel.set(null);
@@ -260,7 +267,10 @@
     if (!manager) return;
     try {
       const res = await manager.flash();
-      pushControllerLog(res.success ? get(LL).controller.saveDoneLog() : res.message, res.success ? 'info' : 'error');
+      pushControllerLog(
+        res.success ? get(LL).controller.saveDoneLog() : res.message,
+        res.success ? 'info' : 'error'
+      );
       // Persisting the in-memory changes makes them the new undo baseline.
       if (res.success) await snapshotCalibration();
     } catch (e) {
@@ -299,6 +309,29 @@
 
   onDestroy(() => {
     disconnect().catch(() => {});
+  });
+
+  // --- HID diagnostics (#124) -------------------------------------------------
+  // 2 s poll, ONLY while the collapsible block is open (no extra traffic while
+  // closed or disconnected). Errors (device gone, no backend in dev/mock-less
+  // contexts) keep the last value / the null placeholders.
+  let diagOpen = $state(false);
+  let diag = $state<HidDiagnostics | null>(null);
+
+  async function pollDiagnostics(): Promise<void> {
+    try {
+      diag = await hidDiagnostics();
+    } catch {
+      // ignore — the block keeps its placeholders
+    }
+  }
+
+  $effect(() => {
+    if (diagOpen) {
+      void pollDiagnostics();
+      const t = setInterval(pollDiagnostics, 2000);
+      return () => clearInterval(t);
+    }
   });
 </script>
 
@@ -352,9 +385,12 @@
               class="flex flex-col items-start rounded-lg bg-gray-800 px-3 py-2 text-left hover:bg-gray-700"
               onclick={() => connectDevice(dev)}
             >
-              <span class="text-sm text-gray-100">{dev.product || $LL.controller.pickerUnknown()}</span>
+              <span class="text-sm text-gray-100"
+                >{dev.product || $LL.controller.pickerUnknown()}</span
+              >
               <span class="text-xs text-gray-500">
-                {#if dev.serial_number}{dev.serial_number} · {/if}{dev.path}
+                {#if dev.serial_number}{dev.serial_number} ·
+                {/if}{dev.path}
               </span>
             </button>
           {/each}
@@ -378,6 +414,64 @@
       </div>
     </div>
   {:else}
+    <!-- Status row (#124): transport / battery / mic+headphone badges, derived
+         from the existing poll stores — no extra polling. -->
+    <div
+      class="flex flex-wrap items-center gap-2 rounded-lg bg-gray-900 px-3 py-2"
+      data-testid="status-row"
+    >
+      <span
+        class="flex items-center gap-1 rounded bg-gray-800 px-2 py-0.5 text-xs text-gray-200"
+        data-testid="transport-badge"
+        title={$LL.controller.transportTitle({
+          transport:
+            $controllerTransport === 'bt'
+              ? $LL.controller.transportBt()
+              : $LL.controller.transportUsb(),
+        })}
+      >
+        {#if $controllerTransport === 'bt'}
+          <Bluetooth class="h-3 w-3 text-blue-400" />
+          {$LL.controller.transportBt()}
+        {:else}
+          <Usb class="h-3 w-3 text-gray-400" />
+          {$LL.controller.transportUsb()}
+        {/if}
+      </span>
+      <span
+        class="flex items-center gap-1 rounded bg-gray-800 px-2 py-0.5 text-xs {$batteryStatus.is_error
+          ? 'text-red-400'
+          : 'text-gray-200'}"
+        data-testid="battery-badge"
+        title={$LL.controller.batteryTitle()}
+      >
+        {#if $batteryStatus.is_charging}
+          <BatteryCharging class="h-3 w-3 text-green-400" />
+        {:else}
+          <Battery class="h-3 w-3 text-gray-400" />
+        {/if}
+        {$batteryStatus.bat_txt || '—'}
+      </span>
+      {#if $micConnected}
+        <span
+          class="flex items-center gap-1 rounded bg-gray-800 px-2 py-0.5 text-xs text-gray-200"
+          data-testid="mic-badge"
+          title={$LL.controller.micBadge()}
+        >
+          <Mic class="h-3 w-3 text-teal-400" />
+        </span>
+      {/if}
+      {#if $headphoneConnected}
+        <span
+          class="flex items-center gap-1 rounded bg-gray-800 px-2 py-0.5 text-xs text-gray-200"
+          data-testid="headphone-badge"
+          title={$LL.controller.headphoneBadge()}
+        >
+          <Headphones class="h-3 w-3 text-teal-400" />
+        </span>
+      {/if}
+    </div>
+
     <!-- Info bar -->
     <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
       <div class="rounded-lg bg-gray-800/60 p-3" title={$LL.controller.modelTitle()}>
@@ -386,8 +480,14 @@
       </div>
       <div class="rounded-lg bg-gray-800/60 p-3" title={$LL.controller.batteryTitle()}>
         <div class="text-xs text-gray-500">{$LL.controller.battery()}</div>
-        <div class="flex items-center gap-1.5 text-sm font-medium { $batteryStatus.is_error ? 'text-red-400' : 'text-gray-200' }"
-          title={$batteryStatus.is_error ? $LL.controller.batteryErrorTitle() : $LL.controller.batteryTitle()}>
+        <div
+          class="flex items-center gap-1.5 text-sm font-medium {$batteryStatus.is_error
+            ? 'text-red-400'
+            : 'text-gray-200'}"
+          title={$batteryStatus.is_error
+            ? $LL.controller.batteryErrorTitle()
+            : $LL.controller.batteryTitle()}
+        >
           <Battery class="h-4 w-4" />
           {$batteryStatus.bat_txt || '—'}
         </div>
@@ -421,8 +521,10 @@
     </div>
 
     <!-- BT feature-flow gate (#120): calibration/NVS/save need USB -->
-    {#if transport === 'bt'}
-      <div class="rounded-lg border border-amber-700/40 bg-amber-900/30 px-3 py-2 text-xs text-amber-200">
+    {#if $controllerTransport === 'bt'}
+      <div
+        class="rounded-lg border border-amber-700/40 bg-amber-900/30 px-3 py-2 text-xs text-amber-200"
+      >
         {$LL.controller.btFeatureGate()}
       </div>
     {/if}
@@ -432,8 +534,10 @@
       <button
         class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
         onclick={() => (calibOpen = true)}
-        disabled={transport === 'bt'}
-        title={transport === 'bt' ? $LL.controller.btFeatureGate() : $LL.controller.calibration()}
+        disabled={$controllerTransport === 'bt'}
+        title={$controllerTransport === 'bt'
+          ? $LL.controller.btFeatureGate()
+          : $LL.controller.calibration()}
       >
         <Wrench class="h-4 w-4" />
         {$LL.controller.calibration()}
@@ -441,8 +545,10 @@
       <button
         class="flex items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 text-sm text-white hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed"
         onclick={() => (circOpen = true)}
-        disabled={transport === 'bt'}
-        title={transport === 'bt' ? $LL.controller.btFeatureGate() : $LL.controller.circularity()}
+        disabled={$controllerTransport === 'bt'}
+        title={$controllerTransport === 'bt'
+          ? $LL.controller.btFeatureGate()
+          : $LL.controller.circularity()}
       >
         <Crosshair class="h-4 w-4" />
         {$LL.controller.circularity()}
@@ -457,8 +563,8 @@
       <button
         class="flex items-center gap-1.5 rounded-lg bg-amber-600/20 px-4 py-2 text-sm text-amber-400 hover:bg-amber-600/30 disabled:opacity-40 disabled:cursor-not-allowed"
         onclick={flashController}
-        disabled={transport === 'bt'}
-        title={transport === 'bt'
+        disabled={$controllerTransport === 'bt'}
+        title={$controllerTransport === 'bt'
           ? $LL.controller.btFeatureGate()
           : $LL.controller.saveTitle()}
       >
@@ -468,14 +574,12 @@
       <button
         class="flex items-center gap-1.5 rounded-lg bg-gray-700 px-4 py-2 text-sm text-gray-300 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed"
         onclick={undoCalibration}
-        disabled={!calibSnapshot || transport === 'bt'}
-        title={
-          transport === 'bt'
-            ? $LL.controller.btFeatureGate()
-            : calibSnapshot
-              ? $LL.controller.discardTitleAvail()
-              : $LL.controller.discardTitleNone()
-        }
+        disabled={!calibSnapshot || $controllerTransport === 'bt'}
+        title={$controllerTransport === 'bt'
+          ? $LL.controller.btFeatureGate()
+          : calibSnapshot
+            ? $LL.controller.discardTitleAvail()
+            : $LL.controller.discardTitleNone()}
       >
         <Undo2 class="h-4 w-4" />
         {$LL.controller.discard()}
@@ -509,6 +613,24 @@
         <Activity class="h-4 w-4" />
         {$LL.controller.sticks()}
       </div>
+      <!-- Deadzone slider (#124): radial display deadzone for the visualizers
+           only (applyDeadzone) — never written to the protocol. -->
+      <div class="mb-3 flex items-center gap-2 text-xs text-gray-500">
+        <label class="shrink-0" for="stick-deadzone">{$LL.controller.deadzoneLabel()}</label>
+        <input
+          id="stick-deadzone"
+          data-testid="deadzone-slider"
+          type="range"
+          min="0"
+          max="20"
+          step="1"
+          class="w-40 accent-teal-500"
+          value={Math.round($stickDeadzone * 100)}
+          oninput={(e) => setStickDeadzonePercent(Number(e.currentTarget.value))}
+          title={$LL.controller.deadzoneTitle()}
+        />
+        <span class="w-10 shrink-0 tabular-nums">{Math.round($stickDeadzone * 100)} %</span>
+      </div>
       <div class="flex justify-center gap-6">
         <div class="flex flex-col items-center gap-2">
           <StickVisualizer
@@ -516,6 +638,11 @@
             size={140}
             enableZoomCenter
             deadzone={$stickDeadzone}
+            stick={applyDeadzone(
+              $stickState.left.x,
+              $stickState.left.y,
+              Math.round($stickDeadzone * 100)
+            )}
             circularityData={$stickCircularity.left}
           />
           <span class="text-xs text-gray-500">{$LL.controller.stickLeft()}</span>
@@ -536,6 +663,11 @@
             size={140}
             enableZoomCenter
             deadzone={$stickDeadzone}
+            stick={applyDeadzone(
+              $stickState.right.x,
+              $stickState.right.y,
+              Math.round($stickDeadzone * 100)
+            )}
             circularityData={$stickCircularity.right}
           />
           <span class="text-xs text-gray-500">{$LL.controller.stickRight()}</span>
@@ -656,9 +788,29 @@
         {$LL.controller.copiedToast({ label: copied })}
       </div>
     {/if}
+
+    <!-- HID diagnostics block (#124): collapsible, 2 s poll only while open. -->
+    <details
+      class="rounded-xl bg-gray-900/60 px-3 py-2 text-xs text-gray-400"
+      data-testid="hid-diagnostics"
+      bind:open={diagOpen}
+    >
+      <summary class="cursor-pointer select-none">{$LL.controller.diagnosticsTitle()}</summary>
+      <div class="mt-2 grid grid-cols-2 gap-1">
+        <span>{$LL.controller.diagWrites()}: {diag?.write_count ?? 0}</span>
+        <span>{$LL.controller.diagWriteErrors()}: {diag?.write_errors ?? 0}</span>
+        <span>{$LL.controller.diagDropped()}: {diag?.dropped_reports ?? 0}</span>
+        <span class="truncate">{$LL.controller.diagPath()}: {diag?.open_path ?? '—'}</span>
+        {#if diag?.last_write_error}
+          <span class="col-span-2 text-red-300"
+            >{$LL.controller.diagLastWriteError()}: {diag.last_write_error}</span
+          >
+        {/if}
+      </div>
+    </details>
   {/if}
 </div>
 
 <CalibrationModal bind:open={calibOpen} {manager} />
 <CalibrationModal bind:open={circOpen} {manager} initialMode="range" />
-<QuickTestModal bind:open={quickTestOpen} {manager} {transport} />
+<QuickTestModal bind:open={quickTestOpen} {manager} transport={$controllerTransport} />

@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { invoke } from './core';
-import { mockState, resetMockState, getMockState, mockHidRuntime, mockFeatureReplies } from './state';
+import {
+  mockState,
+  resetMockState,
+  getMockState,
+  mockHidRuntime,
+  mockFeatureReplies,
+} from './state';
 import { on } from './_shared';
 import { validateBtInputCrc, fillOutputReportCrc } from '../controllers/crc32';
 
@@ -251,14 +257,20 @@ describe('canned DS5 feature replies (#123)', () => {
 
   it('0x80 get-calibration answers a valid module blob (also staged under 0x80)', async () => {
     await invoke('hid_send_feature_report', { reportId: 0x80, data: [1] });
-    const out = await invoke<number[]>('hid_receive_feature_report', { reportId: 0x80, length: 64 });
+    const out = await invoke<number[]>('hid_receive_feature_report', {
+      reportId: 0x80,
+      length: 64,
+    });
     expect(out.length).toBeGreaterThan(10);
     expect(out[0]).toBe(0x80);
   });
 
   it('0x80 system-info command echoes on 0x81 as [0x81, base, num, 2, …] (getSystemInfo)', async () => {
     await invoke('hid_send_feature_report', { reportId: 0x80, data: [1, 19] }); // serial
-    const out = await invoke<number[]>('hid_receive_feature_report', { reportId: 0x81, length: 64 });
+    const out = await invoke<number[]>('hid_receive_feature_report', {
+      reportId: 0x81,
+      length: 64,
+    });
     expect(out[0]).toBe(0x81);
     expect(out[1]).toBe(1);
     expect(out[2]).toBe(19);
@@ -270,14 +282,20 @@ describe('canned DS5 feature replies (#123)', () => {
 
   it('0x80 NVS-status query [3,3] echoes 0x03030200 (unlocked) on 0x81 (queryNvStatus)', async () => {
     await invoke('hid_send_feature_report', { reportId: 0x80, data: [3, 3] });
-    const out = await invoke<number[]>('hid_receive_feature_report', { reportId: 0x81, length: 64 });
+    const out = await invoke<number[]>('hid_receive_feature_report', {
+      reportId: 0x81,
+      length: 64,
+    });
     const view = new DataView(new Uint8Array(out).buffer);
     expect(view.getUint32(1, false)).toBe(0x03030200); // unlocked, permanent
   });
 
   it('0x80 module-data query [12,2] echoes 12 u16 values on 0x81 (getInMemoryModuleData)', async () => {
     await invoke('hid_send_feature_report', { reportId: 0x80, data: [12, 2] });
-    const out = await invoke<number[]>('hid_receive_feature_report', { reportId: 0x81, length: 64 });
+    const out = await invoke<number[]>('hid_receive_feature_report', {
+      reportId: 0x81,
+      length: 64,
+    });
     const view = new DataView(new Uint8Array(out).buffer);
     expect(out[0]).toBe(129);
     expect(out[1]).toBe(12);
@@ -290,7 +308,10 @@ describe('canned DS5 feature replies (#123)', () => {
 
   it('0x80 BD-addr query [9,2] echoes six MAC bytes on 0x81 (getBdAddr)', async () => {
     await invoke('hid_send_feature_report', { reportId: 0x80, data: [9, 2] });
-    const out = await invoke<number[]>('hid_receive_feature_report', { reportId: 0x81, length: 64 });
+    const out = await invoke<number[]>('hid_receive_feature_report', {
+      reportId: 0x81,
+      length: 64,
+    });
     const view = new DataView(new Uint8Array(out).buffer);
     const bytes = [5, 4, 3, 2, 1, 0].map((i) => view.getUint8(4 + i)); // formatMacFromView order
     expect(bytes.every((b) => b !== 0)).toBe(true);
@@ -367,7 +388,9 @@ describe('mock HID error injection (#123)', () => {
     expect(err).toContain('HID-Write');
     // Without the arming the command runs normally again.
     mockState.update((s) => ({ ...s, hid: { ...s.hid, injectErrors: [] } }));
-    await expect(invoke('hid_send_output_report', { data: usbOutputFrame() })).resolves.toBeUndefined();
+    await expect(
+      invoke('hid_send_output_report', { data: usbOutputFrame() })
+    ).resolves.toBeUndefined();
   });
 
   it('armed hid-connect makes hid_connect reject', async () => {
@@ -392,10 +415,92 @@ describe('mock HID error injection (#123)', () => {
 
   it('injection arming does not leak into other hid commands', async () => {
     mockState.update((s) => ({ ...s, hid: { ...s.hid, injectErrors: ['hid-read'] } }));
-    await expect(invoke('hid_send_output_report', { data: usbOutputFrame() })).resolves.toBeUndefined();
+    await expect(
+      invoke('hid_send_output_report', { data: usbOutputFrame() })
+    ).resolves.toBeUndefined();
     await expect(
       invoke('hid_send_feature_report', { reportId: 0x82, data: [1, 1, 1] })
     ).resolves.toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 14 (#124) — hid_diagnostics: the mock handler reports the same
+// HidDiagnostics shape as the Rust command, from the runtime write counters.
+// ---------------------------------------------------------------------------
+
+describe('mock hid_diagnostics (#124)', () => {
+  beforeEach(() => resetMockState());
+
+  it('returns the Rust HidDiagnostics shape from the runtime counters', async () => {
+    mockState.update((s) => ({ ...s, hid: { ...s.hid, connected: true } }));
+    mockHidRuntime.writeCount = 5;
+    mockHidRuntime.writeErrors = 1;
+    mockHidRuntime.lastWriteError = 'HID-Write fehlgeschlagen';
+    const d = await invoke<{
+      connected: boolean;
+      open_path: string | null;
+      write_count: number;
+      write_errors: number;
+      dropped_reports: number;
+      last_write_error: string | null;
+    }>('hid_diagnostics');
+    // open_path comes from the (default, connected) mock device list.
+    expect(d.connected).toBe(true);
+    expect(d.open_path).toBe('/dev/hidraw4');
+    expect(d.write_count).toBe(5);
+    expect(d.write_errors).toBe(1);
+    expect(d.dropped_reports).toBe(0);
+    expect(d.last_write_error).toBe('HID-Write fehlgeschlagen');
+  });
+
+  it('reports connected:false and no open path when disconnected', async () => {
+    mockState.update((s) => ({ ...s, hid: { ...s.hid, connected: false } }));
+    const d = await invoke<{ connected: boolean; open_path: string | null }>('hid_diagnostics');
+    expect(d.connected).toBe(false);
+    expect(d.open_path).toBeNull();
+  });
+
+  it('counts successful output writes and injected write errors', async () => {
+    await invoke('hid_send_output_report', { data: usbOutputFrame() });
+    let d = await invoke<{
+      write_count: number;
+      write_errors: number;
+      last_write_error: string | null;
+    }>('hid_diagnostics');
+    expect(d.write_count).toBe(1);
+    expect(d.write_errors).toBe(0);
+    expect(d.last_write_error).toBeNull();
+
+    // Armed hid-write injection → write_errors++ + last_write_error recorded.
+    mockState.update((s) => ({ ...s, hid: { ...s.hid, injectErrors: ['hid-write'] } }));
+    const err = await invoke('hid_send_output_report', { data: usbOutputFrame() }).then(
+      () => null,
+      (e) => e
+    );
+    expect(err).toContain('HID-Write');
+    d = await invoke<{
+      write_count: number;
+      write_errors: number;
+      last_write_error: string | null;
+    }>('hid_diagnostics');
+    expect(d.write_count).toBe(1); // unchanged
+    expect(d.write_errors).toBe(1);
+    expect(d.last_write_error).toContain('HID-Write');
+  });
+
+  it('resets the diagnostics counters with resetMockState', async () => {
+    await invoke('hid_send_output_report', { data: usbOutputFrame() });
+    expect((await invoke<{ write_count: number }>('hid_diagnostics')).write_count).toBe(1);
+    resetMockState();
+    const d = await invoke<{
+      write_count: number;
+      write_errors: number;
+      last_write_error: string | null;
+    }>('hid_diagnostics');
+    expect(d.write_count).toBe(0);
+    expect(d.write_errors).toBe(0);
+    expect(d.last_write_error).toBeNull();
   });
 });
 

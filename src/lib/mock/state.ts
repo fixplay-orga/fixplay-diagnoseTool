@@ -171,7 +171,25 @@ export const mockHidRuntime: {
   mirroredLightbar: [number, number, number];
   /** Cyclic Bluetooth input sequence counter (mod 64, top 6 bits of byte 0). */
   btInputSeq: number;
-} = { lastOutputReport: null, mirroredLightbar: [0, 0, 0], btInputSeq: 0 };
+  /** HID write diagnostics counters (#124), reported by the mock
+   * `hid_diagnostics` handler. They increment per output report (60 fps in a
+   * live mock session), so they live here — not in the persisted store — for
+   * the same reason as the mirror state above. `lastWriteError` mirrors the
+   * Rust `last_write_error` (null until a write fails, e.g. an armed
+   * `hid-write` injection). */
+  writeCount: number;
+  writeErrors: number;
+  droppedReports: number;
+  lastWriteError: string | null;
+} = {
+  lastOutputReport: null,
+  mirroredLightbar: [0, 0, 0],
+  btInputSeq: 0,
+  writeCount: 0,
+  writeErrors: 0,
+  droppedReports: 0,
+  lastWriteError: null,
+};
 
 /**
  * Canned DS5 feature replies (#123): report id → staged reply buffer. The
@@ -391,6 +409,10 @@ export function resetMockState(): void {
   mockHidRuntime.lastOutputReport = null;
   mockHidRuntime.mirroredLightbar = [0, 0, 0];
   mockHidRuntime.btInputSeq = 0;
+  mockHidRuntime.writeCount = 0;
+  mockHidRuntime.writeErrors = 0;
+  mockHidRuntime.droppedReports = 0;
+  mockHidRuntime.lastWriteError = null;
   mockFeatureReplies.clear();
 }
 
