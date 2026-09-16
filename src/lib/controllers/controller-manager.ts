@@ -304,6 +304,18 @@ export class ControllerManager {
     await this.currentController.setMuteLed(mode);
   }
 
+  async setLightbarSetup(
+    mode: 'light-on' | 'light-out'
+  ): Promise<{ success: boolean; message: string }> {
+    if (!this.currentController) throw new Error('No controller connected');
+    return this.currentController.setLightbarSetup(mode);
+  }
+
+  async setLedBrightness(percent = 100): Promise<{ success: boolean; message: string }> {
+    if (!this.currentController) throw new Error('No controller connected');
+    return this.currentController.setLedBrightness(percent);
+  }
+
   private _sticksChanged(current: SticksState, newValues: SticksState): boolean {
     return (
       current.left.x !== newValues.left.x ||

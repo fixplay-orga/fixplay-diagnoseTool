@@ -78,9 +78,29 @@ const DS5_VALID_FLAG1 = {
   MUTE_LED: 0x01,
   POWER_SAVE_MUTE: 0x02,
   LIGHTBAR_COLOR: 0x04,
+  RELEASE_LEDS: 0x08,
   PLAYER_INDICATOR: 0x10,
-  LED_BRIGHTNESS: 0x20,
-  LIGHTBAR_SETUP: 0x40,
+  AUDIO_CONTROL2: 0x80,
+} as const;
+
+/**
+ * valid_flag2 lives at common offset 38 (second flag word). Bit 1
+ * (LIGHTBAR_SETUP_CONTROL_ENABLE) gates the lightbar_setup (41) and
+ * led_brightness (42) bytes — without it the pad ignores both. The kernel
+ * driver leaves the lightbar in LIGHT_OUT (faded) mode when it releases the
+ * device, and in that mode pure color writes (flag1 bit2) are visually
+ * ignored: this region is the root-cause fix for the "light test does
+ * nothing" report.
+ */
+const DS5_VALID_FLAG2 = {
+  LIGHTBAR_SETUP_CONTROL_ENABLE: 0x02,
+  COMPATIBLE_VIBRATION2: 0x04,
+} as const;
+
+/** lightbar_setup byte values (kernel hid-playstation.c, LIGHT_OUT = BIT(1)). */
+const DS5_LIGHTBAR_SETUP = {
+  LIGHT_ON: 0x00,
+  LIGHT_OUT: 0x02,
 } as const;
 
 interface OutputState {
@@ -167,7 +187,7 @@ class DS5OutputStruct {
     v.setUint8(6, s.micVolume);
     v.setUint8(7, s.audioControl);
     v.setUint8(8, s.muteLedControl);
-    v.setUint8(9, 0);
+    v.setUint8(9, s.powerSaveMuteControl);
     v.setUint8(10, s.adaptiveTriggerRightMode);
     v.setUint8(11, s.adaptiveTriggerRightParam0);
     v.setUint8(12, s.adaptiveTriggerRightParam1);
@@ -178,7 +198,13 @@ class DS5OutputStruct {
     v.setUint8(23, s.adaptiveTriggerLeftParam1);
     v.setUint8(24, s.adaptiveTriggerLeftParam2);
     for (let i = 25; i <= 31; i++) v.setUint8(i, 0);
-    for (let i = 32; i <= 42; i++) v.setUint8(i, 0);
+    for (let i = 32; i <= 36; i++) v.setUint8(i, 0);
+    v.setUint8(37, s.audioControl2);
+    v.setUint8(38, s.validFlag2);
+    v.setUint8(39, 0);
+    v.setUint8(40, 0);
+    v.setUint8(41, s.lightbarSetup);
+    v.setUint8(42, s.ledBrightness);
     v.setUint8(43, s.playerIndicator);
     v.setUint8(44, s.ledCRed);
     v.setUint8(45, s.ledCGreen);
@@ -696,16 +722,20 @@ export class DS5Controller extends BaseController {
     blue = 0
   ): Promise<{ success: boolean; message: string }> {
     try {
-      const { validFlag1 } = this.currentOutputState;
+      const { validFlag1, validFlag2 } = this.currentOutputState;
       const outputStruct = new DS5OutputStruct({
         ...this.currentOutputState,
         ledCRed: Math.max(0, Math.min(255, red)),
         ledCGreen: Math.max(0, Math.min(255, green)),
         ledCBlue: Math.max(0, Math.min(255, blue)),
+        lightbarSetup: DS5_LIGHTBAR_SETUP.LIGHT_ON,
+        ledBrightness: this.currentOutputState.ledBrightness || 255,
         validFlag1: validFlag1 | DS5_VALID_FLAG1.LIGHTBAR_COLOR,
+        validFlag2: validFlag2 | DS5_VALID_FLAG2.LIGHTBAR_SETUP_CONTROL_ENABLE,
       });
       await this.sendOutputReport(outputStruct.pack(), 'set lightbar color');
       outputStruct.state.validFlag1 &= ~DS5_VALID_FLAG1.LIGHTBAR_COLOR;
+      outputStruct.state.validFlag2 &= ~DS5_VALID_FLAG2.LIGHTBAR_SETUP_CONTROL_ENABLE;
       this.updateCurrentOutputState(outputStruct);
       return { success: true, message: '' };
     } catch (error) {
@@ -747,9 +777,52 @@ export class DS5Controller extends BaseController {
     }
   }
 
+  async setLightbarSetup(
+    mode: 'light-on' | 'light-out'
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      const { validFlag2 } = this.currentOutputState;
+      const outputStruct = new DS5OutputStruct({
+        ...this.currentOutputState,
+        lightbarSetup:
+          mode === 'light-out' ? DS5_LIGHTBAR_SETUP.LIGHT_OUT : DS5_LIGHTBAR_SETUP.LIGHT_ON,
+        ledBrightness: this.currentOutputState.ledBrightness || 255,
+        validFlag2: validFlag2 | DS5_VALID_FLAG2.LIGHTBAR_SETUP_CONTROL_ENABLE,
+      });
+      await this.sendOutputReport(outputStruct.pack(), 'set lightbar setup');
+      this.updateCurrentOutputState(outputStruct);
+      return { success: true, message: '' };
+    } catch (error) {
+      throw new Error('Failed to set lightbar setup', { cause: error });
+    }
+  }
+
+  /** Brightness lives in the valid_flag2 region (led_brightness@42) and is sent
+   * with flag2 bit1. percent is UI-friendly 0..100 and scales to 0..255. */
+  async setLedBrightness(percent = 100): Promise<{ success: boolean; message: string }> {
+    try {
+      const { validFlag2 } = this.currentOutputState;
+      const value = Math.max(
+        0,
+        Math.min(255, Math.round((Math.max(0, Math.min(100, percent)) / 100) * 255))
+      );
+      const outputStruct = new DS5OutputStruct({
+        ...this.currentOutputState,
+        ledBrightness: value,
+        validFlag2: validFlag2 | DS5_VALID_FLAG2.LIGHTBAR_SETUP_CONTROL_ENABLE,
+      });
+      await this.sendOutputReport(outputStruct.pack(), 'set LED brightness');
+      this.updateCurrentOutputState(outputStruct);
+      return { success: true, message: '' };
+    } catch (error) {
+      throw new Error('Failed to set LED brightness', { cause: error });
+    }
+  }
+
   async resetLights(): Promise<{ success: boolean; message: string }> {
     try {
       await this.setLightbarColor(0, 0, 0);
+      await this.setLightbarSetup('light-on');
       await this.setPlayerIndicator(0);
       await this.setMuteLed(0);
       return { success: true, message: '' };

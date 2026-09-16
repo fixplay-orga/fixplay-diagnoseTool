@@ -237,6 +237,16 @@ export abstract class BaseController {
     return { success: true, message: 'This controller does not support player indicators' };
   }
 
+  async setLightbarSetup(
+    _mode: 'light-on' | 'light-out'
+  ): Promise<{ success: boolean; message: string }> {
+    return { success: true, message: 'This controller does not support lightbar setup' };
+  }
+
+  async setLedBrightness(_percent = 100): Promise<{ success: boolean; message: string }> {
+    return { success: true, message: 'This controller does not support LED brightness' };
+  }
+
   getSupportedQuickTests(): string[] {
     return ['usb', 'buttons', 'adaptive', 'haptic', 'lights', 'speaker', 'headphone', 'microphone'];
   }

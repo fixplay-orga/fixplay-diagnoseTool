@@ -129,6 +129,50 @@ describe('DS5Controller output framing', () => {
   });
 });
 
+describe('flag2 / lightbar_setup region (#111)', () => {
+  it('setLightbarColor sends valid_flag2 enable + lightbar_setup light-on next to the color', async () => {
+    const device = makeFakeDevice();
+    const ctrl = new DS5Controller(device);
+    await ctrl.setLightbarColor(255, 0, 0);
+    const out = device.lastOut()!;
+    expect(out.reportId).toBe(0x02);
+    expect(out.data[1] & 0x04).toBe(0x04); // flag1 LIGHTBAR_COLOR
+    expect(out.data[38]).toBe(0x02); // flag2 LIGHTBAR_SETUP_CONTROL_ENABLE
+    expect(out.data[41]).toBe(0x00); // lightbar_setup = light-on
+    expect(out.data[42]).toBe(255); // led_brightness bleibt voll an
+    expect(out.data[44]).toBe(255); // RGB rot
+    expect(out.data[45]).toBe(0);
+    expect(out.data[46]).toBe(0);
+  });
+
+  it('setLightbarSetup("light-out") writes LIGHT_OUT with flag2 enable', async () => {
+    const device = makeFakeDevice();
+    const ctrl = new DS5Controller(device);
+    await ctrl.setLightbarSetup('light-out');
+    const out = device.lastOut()!;
+    expect(out.data[38]).toBe(0x02);
+    expect(out.data[41]).toBe(0x02); // LIGHT_OUT
+  });
+
+  it('setLedBrightness(50) writes the brightness byte with flag2 enable', async () => {
+    const device = makeFakeDevice();
+    const ctrl = new DS5Controller(device);
+    await ctrl.setLedBrightness(50);
+    const out = device.lastOut()!;
+    expect(out.data[38]).toBe(0x02);
+    expect(out.data[42]).toBe(Math.round((50 / 100) * 255)); // 128
+  });
+
+  it('setLedBrightness clamps percent to 0..100', async () => {
+    const device = makeFakeDevice();
+    const ctrl = new DS5Controller(device);
+    await ctrl.setLedBrightness(500);
+    expect(device.lastOut()!.data[42]).toBe(255);
+    await ctrl.setLedBrightness(-10);
+    expect(device.lastOut()!.data[42]).toBe(0);
+  });
+});
+
 describe('ControllerManager input parsing (transport-aware)', () => {
   function buildUsbReport(): Uint8Array {
     const r = new Uint8Array(64);

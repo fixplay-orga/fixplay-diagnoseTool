@@ -133,3 +133,19 @@
 ## 🚀 Release-Pipeline
 
 - [x] **#108** Release-Audit: 6 verifizierte Defekte in der Release-Pipeline (alle gegen die veröffentlichten v0.3.0-Artefakte nachgewiesen) — (1) Linux/macOS-Releases bundelten nur den 12-Byte-Platzhalter-Stub → Flash-Feature out-of-the-box kaputt: Runtime-Guard (`is_placeholder_binary` in fixplay-flashrom) erkennt den Stub, `resolve_flashrom_path` fällt auf PATH zurück, Selbst-Check meldet ihn; CI baut jetzt echtes flashrom v1.4.0 für Linux x86_64/ARM64 + macOS (gleiche CONFIG_*-Flags wie Windows), Arch-Paket liefert Distro-flashrom (+ `depends`), AUR-Source-PKGBUILD bündelt den Stub nicht mehr (+ `flashrom`-Abhängigkeit). (2) Windows-flashrom.exe dynamisch gelinkt → importiert libusb-1.0.dll/libwinpthread-1.dll, die der Installer nicht mitliefert (per objdump im veröffentlichten Installer bestätigt): `LDFLAGS="-static"` im MSYS2-Build. (3) SHA256SUMS.txt listete sich selbst (e3b0c442-Leerstring-Hash im veröffentlichten Release) → `! -name SHA256SUMS.txt` + `sha256sum -c` als Verifikation. (4) Tag↔tauri.conf.json-Version-Drift lief grün durch und erzeugte 404ende AUR-Pakete/leeres latest.json → Version-Gate im `prepare`-Job. (5) `release`-Job hing nicht von `build-extra` ab (AppImage-Checksums-Manifest fehlte dmg/ARM64-Artefakten). (6) Arch-Paket ohne xbox_error_codes.json und ohne JSON-Validitätsgate beim Error-DB-Download. (Unvalidated bis zum nächsten Tag-Release.)
+## #111 Protokoll-Layer: flag2/lightbar_setup/led_brightness sendbar machen (Lichttest-Fix)
+## #112 Connect-Baseline (blauer Blitz) + Akku-Status 0xF als Fehler
+## #113 Adaptive-Trigger-Parametrik pro Modus + setVibration-Flag0-Semantik
+## #114 Player-LED-0x20-Legacy-Fallback + lokalisierte Save-Logs
+## #115 Rust hid.rs: async Commands, Write-Ergebnis, Feature-Send-Guard, try_send
+## #116 Rust hid.rs: Unplug-Erkennung, Teardown-nach-Open, Thread-Join
+## #117 Device-Picker + Pfad-Open + Edge-USB-PID 0x0e5f
+## #118 BT-Input-CRC-Validierung + Transport-Wait + Transport-Statistiken
+## #119 BT-Verbindungstest im QuickTest-Modal
+## #120 Feature-Flows über BT sperren („nur über USB")
+## #121 Range-Kalibrierung: Busy-Fix, calibrateRangeEnd bei Abbruch, Run-Token
+## #122 QuickTest-Lifecycle: Lights-Verdict, Aktuatoren bei Close/Unmount resetten
+## #123 Mock-Parität: Output-Spiegelung, Canned-Feature-Responses, BT-Modus, Error-Injection
+## #124 Statuszeile + HID-Diagnose-Block + Deadzone-Slider
+## #125 Store-Hygiene + Touchpad 1920×1080 + i18n-Leaks
+## #126 Deployment auf dev-diagnosetool.fixplay.de + Hardware-Validierung
