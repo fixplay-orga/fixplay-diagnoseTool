@@ -2126,6 +2126,33 @@ type RootTranslation = {
 		 */
 		testMicrophoneDesc: string
 		/**
+		 * B​l​u​e​t​o​o​t​h​-​V​e​r​b​i​n​d​u​n​g​s​t​e​s​t
+		 */
+		btTitle: string
+		/**
+		 * 1​0​ ​s​ ​E​m​p​f​a​n​g​s​m​e​s​s​u​n​g​ ​d​e​r​ ​B​l​u​e​t​o​o​t​h​-​V​e​r​b​i​n​d​u​n​g​.
+		 */
+		btDesc: string
+		/**
+		 * S​t​a​b​i​l​:​ ​{​r​e​p​o​r​t​s​}​ ​B​e​r​i​c​h​t​e​ ​·​ ​{​l​o​s​s​}​ ​%​ ​V​e​r​l​u​s​t​ ​·​ ​{​c​r​c​}​ ​C​R​C​-​F​e​h​l​e​r
+		 * @param {unknown} crc
+		 * @param {unknown} loss
+		 * @param {unknown} reports
+		 */
+		btOk: RequiredParams<'crc' | 'loss' | 'reports'>
+		/**
+		 * K​e​i​n​e​ ​B​e​r​i​c​h​t​e​ ​e​m​p​f​a​n​g​e​n
+		 */
+		btNoData: string
+		/**
+		 * Z​u​ ​v​i​e​l​e​ ​C​R​C​-​F​e​h​l​e​r​ ​(​>​ ​5​ ​%​)
+		 */
+		btCrc: string
+		/**
+		 * Z​u​ ​h​o​h​e​r​ ​P​a​k​e​t​v​e​r​l​u​s​t​ ​(​>​ ​2​ ​%​)
+		 */
+		btLoss: string
+		/**
 		 * S​c​h​n​e​l​l​t​e​s​t​ ​'​b​u​t​t​o​n​s​'​ ​a​b​g​e​s​c​h​l​o​s​s​e​n​ ​—​ ​a​l​l​e​ ​B​u​t​t​o​n​s​ ​g​e​d​r​ü​c​k​t
 		 */
 		buttonsCompletedLog: string
@@ -5378,6 +5405,30 @@ export type TranslationFunctions = {
 		 * Prüft Mikrofon-Präsenz und Pegel.
 		 */
 		testMicrophoneDesc: () => LocalizedString
+		/**
+		 * Bluetooth-Verbindungstest
+		 */
+		btTitle: () => LocalizedString
+		/**
+		 * 10 s Empfangsmessung der Bluetooth-Verbindung.
+		 */
+		btDesc: () => LocalizedString
+		/**
+		 * Stabil: {reports} Berichte · {loss} % Verlust · {crc} CRC-Fehler
+		 */
+		btOk: (arg: { crc: unknown, loss: unknown, reports: unknown }) => LocalizedString
+		/**
+		 * Keine Berichte empfangen
+		 */
+		btNoData: () => LocalizedString
+		/**
+		 * Zu viele CRC-Fehler (> 5 %)
+		 */
+		btCrc: () => LocalizedString
+		/**
+		 * Zu hoher Paketverlust (> 2 %)
+		 */
+		btLoss: () => LocalizedString
 		/**
 		 * Schnelltest 'buttons' abgeschlossen — alle Buttons gedrückt
 		 */

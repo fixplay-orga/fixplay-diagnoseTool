@@ -50,6 +50,7 @@
   } from '$lib/stores/controller';
   import { invoke } from '@tauri-apps/api/core';
   import { DS5Controller } from '$lib/controllers/ds5-controller';
+  import type { ControllerTransport } from '$lib/controllers/base-controller';
   import {
     createControllerManager,
     createControllerForDevice,
@@ -64,6 +65,9 @@
   } from '$lib/controllers/tauri-hid-device';
 
   let manager = $state<ControllerManager | null>(null);
+  // Active transport (USB vs BT), refreshed on every poll so the quick-test
+  // modal can show/hide the BT connection test reactively.
+  let transport = $state<ControllerTransport>('usb');
   let calibOpen = $state(false);
   let circOpen = $state(false);
   let quickTestOpen = $state(false);
@@ -193,6 +197,7 @@
             const data = new DataView(new Uint8Array(report.data).buffer);
             manager?.processControllerInput({ data, reportId: report.report_id });
           }
+          transport = manager?.getTransport() ?? 'usb';
         } catch {
           // ignore transient poll errors
         }
@@ -240,6 +245,7 @@
       await manager.disconnect();
       manager = null;
     }
+    transport = 'usb';
     calibSnapshot = null;
     controllerConnected.set(false);
     controllerModel.set(null);
@@ -637,4 +643,4 @@
 
 <CalibrationModal bind:open={calibOpen} {manager} />
 <CalibrationModal bind:open={circOpen} {manager} initialMode="range" />
-<QuickTestModal bind:open={quickTestOpen} {manager} />
+<QuickTestModal bind:open={quickTestOpen} {manager} {transport} />

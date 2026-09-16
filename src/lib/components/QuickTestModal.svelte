@@ -14,20 +14,22 @@
   import { save as saveDialog } from '@tauri-apps/plugin-dialog';
   import { saveTextFile } from '$lib/api/tauri';
   import MicLevelMeter from './MicLevelMeter.svelte';
-  import type { AdaptiveTriggerConfig } from '$lib/controllers/base-controller';
+  import type { AdaptiveTriggerConfig, ControllerTransport } from '$lib/controllers/base-controller';
   import { get } from 'svelte/store';
   import LL from '$lib/i18n/i18n-svelte';
   import type { TranslationFunctions } from '$lib/i18n/i18n-types';
   import type { LocalizedString } from 'typesafe-i18n';
 
-  type TestId = 'buttons' | 'haptic' | 'adaptive' | 'lights' | 'speaker' | 'microphone';
+  type TestId = 'buttons' | 'haptic' | 'adaptive' | 'lights' | 'speaker' | 'microphone' | 'bt';
   type TestStatus = 'idle' | 'running' | 'pass' | 'fail';
 
   let {
     open = $bindable(false),
     manager,
+    transport = 'usb',
   }: {
     open: boolean;
+    transport?: ControllerTransport;
     manager: {
       setVibration: (heavyLeft: number, lightRight: number) => Promise<void>;
       setAdaptiveTrigger: (
@@ -44,10 +46,18 @@
         doneCb?: (r: { success: boolean }) => void
       ) => Promise<void>;
       resetSpeakerSettings: () => Promise<void>;
+      getTransport: () => ControllerTransport;
+      resetTransportStats: () => void;
+      getTransportStats: () => {
+        reports: number;
+        seqGaps: number;
+        crcErrors: number;
+        lastSeq: number | null;
+      };
     } | null;
   } = $props();
 
-  const tests: {
+  const baseTests: {
     id: TestId;
     label: (ll: TranslationFunctions) => LocalizedString;
     desc: (ll: TranslationFunctions) => LocalizedString;
@@ -84,6 +94,17 @@
     },
   ];
 
+  // The BT connection test is a pure receive measurement — it sends nothing and
+  // only makes sense when the controller is actually connected via Bluetooth,
+  // so it's appended to the grid only in that case (transport updates on every
+  // poll in ControllerPanel, so this stays reactive).
+  const btTest = {
+    id: 'bt' as TestId,
+    label: (ll: TranslationFunctions) => ll.quickTest.btTitle(),
+    desc: (ll: TranslationFunctions) => ll.quickTest.btDesc(),
+  };
+  let tests = $derived(transport === 'bt' ? [...baseTests, btTest] : baseTests);
+
   let statuses = $state<Record<TestId, TestStatus>>({
     buttons: 'idle',
     haptic: 'idle',
@@ -91,6 +112,7 @@
     lights: 'idle',
     speaker: 'idle',
     microphone: 'idle',
+    bt: 'idle',
   });
 
   let lightsInterval: ReturnType<typeof setInterval> | null = null;
@@ -180,6 +202,64 @@
     }
   }
 
+  // ── BT connection test: pure receive measurement (#119) ──
+  // Sends nothing; resets the transport counters, lets the input-report poll
+  // run for 10 s and then judges report count, packet loss and CRC ratio.
+  const BT_TEST_DURATION_MS = 10_000;
+  const BT_POLL_INTERVAL_MS = 500;
+  const BT_MAX_CRC_RATIO = 0.05;
+  const BT_MAX_LOSS_RATIO = 0.02;
+  // Abort flag for the currently-running BT test, set from close()/onDestroy
+  // (same lifecycle as abortButtonsTest/lightsInterval). The test loop only
+  // sleeps in 500 ms steps, so it unwinds promptly after the flag flips.
+  let btAborted = false;
+  /** Verdict detail for the bt row, shown next to the pass/fail label. */
+  let btVerdict = $state<string | null>(null);
+
+  async function runBtTest() {
+    if (!manager) return;
+    btAborted = false;
+    btVerdict = null;
+    manager.resetTransportStats();
+    const started = performance.now();
+    while (performance.now() - started < BT_TEST_DURATION_MS && !btAborted) {
+      await new Promise((r) => setTimeout(r, BT_POLL_INTERVAL_MS));
+    }
+    if (btAborted) {
+      statuses.bt = 'idle';
+      return;
+    }
+    const s = manager.getTransportStats();
+    const ll = get(LL);
+    const loss = s.seqGaps / (s.reports + s.seqGaps) || 0;
+    const crc = s.reports > 0 ? s.crcErrors / (s.reports + s.crcErrors) : 1;
+    let pass: boolean;
+    if (s.reports === 0) {
+      btVerdict = ll.quickTest.btNoData();
+      pass = false;
+    } else if (crc > BT_MAX_CRC_RATIO) {
+      btVerdict = ll.quickTest.btCrc();
+      pass = false;
+    } else if (loss > BT_MAX_LOSS_RATIO) {
+      btVerdict = ll.quickTest.btLoss();
+      pass = false;
+    } else {
+      btVerdict = ll.quickTest.btOk({
+        reports: s.reports,
+        loss: Math.round(loss * 100),
+        crc: s.crcErrors,
+      });
+      pass = true;
+    }
+    statuses.bt = pass ? 'pass' : 'fail';
+    pushControllerLog(btVerdict, pass ? 'info' : 'error');
+  }
+
+  /** Flip the BT abort flag so a running measurement ends at its next poll. */
+  function abortBtTest() {
+    btAborted = true;
+  }
+
   async function runTest(id: TestId) {
     if (!manager) return;
     statuses[id] = 'running';
@@ -215,6 +295,9 @@
           break;
         case 'buttons':
           await runButtonsTest();
+          break;
+        case 'bt':
+          await runBtTest();
           break;
         case 'microphone':
           micActive = true;
@@ -308,6 +391,7 @@
       lightsInterval = null;
     }
     abortButtonsTest();
+    abortBtTest();
     missingButtons = [];
     if (manager) {
       manager.setVibration(0, 0).catch(() => {});
@@ -321,6 +405,7 @@
       manager.resetSpeakerSettings().catch(() => {});
     }
     micActive = false;
+    btVerdict = null;
     open = false;
     statuses = {
       buttons: 'idle',
@@ -329,6 +414,7 @@
       lights: 'idle',
       speaker: 'idle',
       microphone: 'idle',
+      bt: 'idle',
     };
   }
 
@@ -336,6 +422,7 @@
   // change). close() covers the user-initiated case; this covers the rest.
   onDestroy(() => {
     abortButtonsTest();
+    abortBtTest();
     if (lightsInterval) {
       clearInterval(lightsInterval);
       lightsInterval = null;
@@ -669,8 +756,13 @@
               {/if}
             </div>
             <div class="flex items-center gap-3">
-              <span class="text-xs font-medium {statusColor(statuses[test.id])}">
-                {statusLabel(statuses[test.id])}
+              <span
+                class="text-xs font-medium {statusColor(statuses[test.id])}"
+                data-testid={test.id === 'bt' ? 'status-bt' : undefined}
+              >
+                {statusLabel(statuses[test.id])}{test.id === 'bt' && btVerdict
+                  ? ` — ${btVerdict}`
+                  : ''}
               </span>
               {#if test.id === 'lights' && statuses.lights === 'running'}
                 <button
@@ -686,6 +778,7 @@
                   onclick={() => runTest(test.id)}
                   disabled={statuses[test.id] === 'running'}
                   aria-label={$LL.quickTest.startAria()}
+                  data-testid={test.id === 'bt' ? 'test-bt' : undefined}
                 >
                   {#if statuses[test.id] === 'running'}
                     <Loader2 class="h-4 w-4 animate-spin" />
