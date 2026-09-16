@@ -476,9 +476,12 @@ export class ControllerManager {
 
 export function createControllerForDevice(device: HIDDeviceLike): BaseController | null {
   const productId = (device as unknown as { productId?: number }).productId;
-  // DualSense: 0x0ce6 vendor, 0x0df2 product
+  // DualSense: USB 0x0ce6 (Standard) / 0x0e5f (DualSense Edge), BT 0x0df2
   const vendorId = (device as unknown as { vendorId?: number }).vendorId;
-  if (vendorId === 0x054c && (productId === 0x0ce6 || productId === 0x0df2)) {
+  if (
+    vendorId === 0x054c &&
+    (productId === 0x0ce6 || productId === 0x0e5f || productId === 0x0df2)
+  ) {
     return new DS5Controller(device);
   }
   return null;

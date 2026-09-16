@@ -2,6 +2,7 @@ use crate::state::{AppState, HidShared};
 use hidapi::HidApi;
 use serde::Serialize;
 use std::collections::VecDeque;
+use std::ffi::CString;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use tauri::State;
@@ -16,6 +17,9 @@ pub struct HidDeviceInfo {
     pub serial_number: Option<String>,
     pub usage_page:    u16,
     pub usage:         u16,
+    /// OS-level device path (e.g. `/dev/hidraw4`) from the hidapi device list —
+    /// lets the frontend open a *specific* device when several match a VID/PID.
+    pub path:          String,
 }
 
 #[derive(Serialize, Clone)]
@@ -247,6 +251,9 @@ pub fn hid_list_devices() -> Result<Vec<HidDeviceInfo>, String> {
             serial_number: d.serial_number().map(str::to_string),
             usage_page:    d.usage_page(),
             usage:         d.usage(),
+            // `path()` is `&CStr` in hidapi 2.x — lossy conversion is safe here
+            // (paths are ASCII device nodes; a non-UTF8 byte just becomes U+FFFD).
+            path:          d.path().to_string_lossy().into_owned(),
         })
         .collect();
     Ok(list)
@@ -272,6 +279,7 @@ fn teardown_hid(hid: &HidShared) {
 pub async fn hid_connect(
     vendor_id: u16,
     product_id: u16,
+    path: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let hid = Arc::clone(&state.hid);
@@ -280,7 +288,22 @@ pub async fn hid_connect(
     tokio::task::spawn_blocking(move || {
         // 1. Open FIRST — a failed open must not destroy a working connection.
         let api = HidApi::new().map_err(|e| e.to_string())?;
-        let device = api.open(vendor_id, product_id).map_err(|e| e.to_string())?;
+        // Path-based open (path from hid_list_devices) with VID/PID fallback —
+        // the path can vanish between listing and open (device replugged, other
+        // panel claimed it). hidapi 2.x's open_path takes a `&CStr`.
+        let device = match &path {
+            Some(p) => {
+                let cpath = CString::new(p.as_str())
+                    .map_err(|_| "Ungültiger HID-Gerätepfad".to_string())?;
+                api.open_path(&cpath)
+                    .or_else(|_| api.open(vendor_id, product_id))
+                    .map_err(|e| e.to_string())?
+            }
+            None => api.open(vendor_id, product_id).map_err(|e| e.to_string())?,
+        };
+        // Only after a successful open: record which path is now held
+        // (HidDiagnostics reports it; a failed open keeps the previous value).
+        *hid.open_path.lock().unwrap() = path.clone();
         // 2. Only now tear down the previous reader thread (and join it).
         teardown_hid(&hid);
         let (cmd_tx, cmd_rx) = mpsc::sync_channel::<HidCmd>(32);
@@ -315,6 +338,8 @@ pub async fn hid_disconnect(state: State<'_, AppState>) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         teardown_hid(&hid);
         hid.reports.lock().unwrap().clear();
+        // Nothing is open anymore — HidDiagnostics must not report a stale path.
+        *hid.open_path.lock().unwrap() = None;
         info!("HID disconnected");
         Ok(())
     })

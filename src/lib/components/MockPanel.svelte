@@ -333,6 +333,7 @@
             serial_number: null,
             usage_page: 1,
             usage: 5,
+            path: `/dev/hidraw${4 + s.hid.devices.length}`,
           },
         ],
       },

@@ -56,7 +56,12 @@
     type ControllerManager,
     type ProcessedInput,
   } from '$lib/controllers/controller-manager';
-  import { hidConnect, type HidPollResult } from '$lib/controllers/tauri-hid-device';
+  import {
+    hidConnect,
+    hidListDevices,
+    type HidPollResult,
+    type HidDeviceInfo,
+  } from '$lib/controllers/tauri-hid-device';
 
   let manager = $state<ControllerManager | null>(null);
   let calibOpen = $state(false);
@@ -64,6 +69,9 @@
   let quickTestOpen = $state(false);
   let connecting = $state(false);
   let connectError = $state<string | null>(null);
+  // Device picker: shown when several DualSenses (USB/BT) are listed at once.
+  let pickerOpen = $state(false);
+  let pickerDevices = $state<HidDeviceInfo[]>([]);
   let fwVersion = $state<string>('—');
   let macAddress = $state<string>('—');
   let copied = $state<string | null>(null);
@@ -133,20 +141,32 @@
     connecting = true;
     connectError = null;
     try {
-      // Try DualSense (0x0ce6) then DualSense Edge (0x0df2)
-      let device = null;
-      for (const productId of [0x0ce6, 0x0df2]) {
-        try {
-          device = await hidConnect(0x054c, productId);
-          break;
-        } catch {
-          // try next product id
-        }
+      const all = await hidListDevices();
+      const ds5 = all.filter(
+        (d) => d.vendor_id === 0x054c && [0x0ce6, 0x0e5f, 0x0df2].includes(d.product_id)
+      );
+      if (ds5.length === 0) throw new Error(get(LL).controller.noDualSenseError());
+      if (ds5.length === 1) {
+        pickerOpen = false;
+        await connectDevice(ds5[0]);
+        return;
       }
-      if (!device) {
-        throw new Error(get(LL).controller.noDualSenseError());
-      }
+      pickerDevices = ds5;
+      pickerOpen = true;
+    } catch (e) {
+      connectError = e instanceof Error ? e.message : String(e);
+      pushControllerLog(get(LL).controller.connectFailedLog({ error: connectError }), 'error');
+    } finally {
+      connecting = false;
+    }
+  }
 
+  async function connectDevice(info: HidDeviceInfo) {
+    connecting = true;
+    connectError = null;
+    pickerOpen = false;
+    try {
+      const device = await hidConnect(info.vendor_id, info.product_id, info.path || undefined);
       const ctrl = createControllerForDevice(device);
       if (!ctrl) throw new Error(get(LL).controller.unsupportedError());
 
@@ -181,13 +201,13 @@
       // Brief pause for the first input report to arrive and set transport.
       await new Promise((r) => setTimeout(r, 80));
 
-      const info = await ctrl.getInfo();
-      if (!info.ok) {
-        throw new Error(get(LL).controller.infoFailed({ error: String(info.error) }));
+      const devInfo = await ctrl.getInfo();
+      if (!devInfo.ok) {
+        throw new Error(get(LL).controller.infoFailed({ error: String(devInfo.error) }));
       }
-      controllerInfo.set(info);
-      fwVersion = info.infoItems?.find((i) => i.key === 'FW Version')?.value ?? '—';
-      macAddress = info.infoItems?.find((i) => i.key === 'Bluetooth Address')?.value ?? '—';
+      controllerInfo.set(devInfo);
+      fwVersion = devInfo.infoItems?.find((i) => i.key === 'FW Version')?.value ?? '—';
+      macAddress = devInfo.infoItems?.find((i) => i.key === 'Bluetooth Address')?.value ?? '—';
       // Lightbar-Baseline: hebt den Kernel-LIGHT_OUT-Zustand auf und bestätigt mit
       // einem blauen Lichtblitz, dass Writes ankommen. Nicht fatal bei Fehlern.
       if (ctrl instanceof DS5Controller) {
@@ -304,6 +324,37 @@
 
   {#if connectError}
     <div class="rounded-lg bg-red-900/30 p-3 text-sm text-red-300">{connectError}</div>
+  {/if}
+
+  {#if pickerOpen}
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div class="w-full max-w-md rounded-2xl bg-gray-900 p-5 shadow-2xl">
+        <h2 class="mb-3 text-lg font-semibold text-gray-100">{$LL.controller.pickerTitle()}</h2>
+        <div class="flex flex-col gap-2">
+          {#each pickerDevices as dev (dev.path)}
+            <button
+              class="flex flex-col items-start rounded-lg bg-gray-800 px-3 py-2 text-left hover:bg-gray-700"
+              onclick={() => connectDevice(dev)}
+            >
+              <span class="text-sm text-gray-100">{dev.product || $LL.controller.pickerUnknown()}</span>
+              <span class="text-xs text-gray-500">
+                {#if dev.serial_number}{dev.serial_number} · {/if}{dev.path}
+              </span>
+            </button>
+          {/each}
+          <button
+            class="mt-2 rounded-lg px-3 py-2 text-sm text-gray-400 hover:text-gray-200"
+            onclick={() => (pickerOpen = false)}
+          >
+            {$LL.common.cancel()}
+          </button>
+        </div>
+      </div>
+    </div>
   {/if}
 
   {#if !$controllerConnected}

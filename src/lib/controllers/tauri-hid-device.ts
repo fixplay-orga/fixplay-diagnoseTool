@@ -9,6 +9,8 @@ export interface HidDeviceInfo {
   serial_number: string | null;
   usage_page: number;
   usage: number;
+  /** OS-level device path (e.g. `/dev/hidraw4`) — empty string when unknown. */
+  path: string;
 }
 
 export interface HidReport {
@@ -30,6 +32,8 @@ export interface HidPollResult {
 export class TauriHIDDevice implements HIDDeviceLike {
   readonly vendorId: number;
   readonly productId: number;
+  /** Device path this instance was opened with (undefined = VID/PID open). */
+  readonly path?: string;
 
   opened = true;
 
@@ -46,9 +50,10 @@ export class TauriHIDDevice implements HIDDeviceLike {
   oninputreport:
     ((event: { device: HIDDeviceLike; reportId: number; data: DataView }) => void) | null = null;
 
-  constructor(vendorId: number, productId: number) {
+  constructor(vendorId: number, productId: number, path?: string) {
     this.vendorId = vendorId;
     this.productId = productId;
+    this.path = path;
   }
 
   async sendFeatureReport(reportId: number, data: BufferSource): Promise<void> {
@@ -74,9 +79,13 @@ export class TauriHIDDevice implements HIDDeviceLike {
   }
 }
 
-export async function hidConnect(vendorId: number, productId: number): Promise<TauriHIDDevice> {
-  await invoke<void>('hid_connect', { vendorId, productId });
-  return new TauriHIDDevice(vendorId, productId);
+export async function hidConnect(
+  vendorId: number,
+  productId: number,
+  path?: string
+): Promise<TauriHIDDevice> {
+  await invoke<void>('hid_connect', { vendorId, productId, path: path ?? null });
+  return new TauriHIDDevice(vendorId, productId, path);
 }
 
 export async function hidListDevices(): Promise<HidDeviceInfo[]> {

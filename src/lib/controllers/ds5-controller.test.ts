@@ -317,6 +317,16 @@ describe('ControllerManager input parsing (transport-aware)', () => {
   });
 });
 
+describe('DS5 PID table (#117)', () => {
+  it('creates a DS5Controller for the Edge USB PID 0x0e5f', () => {
+    const dev = makeFakeDevice();
+    const device = { ...dev, vendorId: 0x054c, productId: 0x0e5f } as unknown as Parameters<
+      typeof createControllerForDevice
+    >[0];
+    expect(createControllerForDevice(device)?.getModel()).toBe('DS5');
+  });
+});
+
 describe('createControllerForDevice', () => {
   it('returns a DS5Controller for the DualSense product ids', () => {
     const dev = makeFakeDevice();
@@ -329,6 +339,7 @@ describe('createControllerForDevice', () => {
       >[0];
     expect(createControllerForDevice(withIds(0x054c, 0x0ce6))).toBeInstanceOf(DS5Controller);
     expect(createControllerForDevice(withIds(0x054c, 0x0df2))).toBeInstanceOf(DS5Controller);
+    expect(createControllerForDevice(withIds(0x054c, 0x0e5f))).toBeInstanceOf(DS5Controller);
     expect(createControllerForDevice(withIds(0x1234, 0x0ce6))).toBeNull();
   });
 });

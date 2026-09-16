@@ -1658,6 +1658,14 @@ type RootTranslation = {
 		 */
 		unsupportedError: string
 		/**
+		 * C​o​n​t​r​o​l​l​e​r​ ​w​ä​h​l​e​n
+		 */
+		pickerTitle: string
+		/**
+		 * U​n​b​e​k​a​n​n​t​e​s​ ​G​e​r​ä​t
+		 */
+		pickerUnknown: string
+		/**
 		 * M​o​d​e​l​l
 		 */
 		model: string
@@ -4927,6 +4935,14 @@ export type TranslationFunctions = {
 		 * Nicht unterstützter Controller.
 		 */
 		unsupportedError: () => LocalizedString
+		/**
+		 * Controller wählen
+		 */
+		pickerTitle: () => LocalizedString
+		/**
+		 * Unbekanntes Gerät
+		 */
+		pickerUnknown: () => LocalizedString
 		/**
 		 * Modell
 		 */

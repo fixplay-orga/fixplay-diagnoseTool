@@ -191,6 +191,7 @@ function defaultHidDevices(): HidDeviceInfo[] {
       serial_number: null,
       usage_page: 1,
       usage: 5,
+      path: '/dev/hidraw4',
     },
   ];
 }

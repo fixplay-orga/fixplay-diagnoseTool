@@ -473,6 +473,8 @@ const de: BaseTranslation = {
     noDualSenseError:
       'Kein DualSense per USB gefunden. Controller einstecken und erneut versuchen.',
     unsupportedError: 'Nicht unterstützter Controller.',
+    pickerTitle: 'Controller wählen',
+    pickerUnknown: 'Unbekanntes Gerät',
     model: 'Modell',
     modelTitle: 'DualSense-Modell (DS5 = Standard, DS5 Edge = Pro-Controller)',
     battery: 'Batterie',

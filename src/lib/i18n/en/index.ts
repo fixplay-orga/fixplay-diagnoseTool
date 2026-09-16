@@ -462,6 +462,8 @@ const en: Translation = {
     notConnectedHint: 'Click "Connect" and select your DualSense controller.',
     noDualSenseError: 'No DualSense found via USB. Plug in the controller and try again.',
     unsupportedError: 'Unsupported controller.',
+    pickerTitle: 'Choose controller',
+    pickerUnknown: 'Unknown device',
     model: 'Model',
     modelTitle: 'DualSense model (DS5 = standard, DS5 Edge = pro controller)',
     battery: 'Battery',
