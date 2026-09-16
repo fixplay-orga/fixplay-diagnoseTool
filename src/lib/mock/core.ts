@@ -236,7 +236,7 @@ const MOCK_DEVICE_INFO = (() => {
   };
   set16(20, 0x0001); // fw type
   set16(22, 0x0019); // fw series (25)
-  set32(24, 0x00050000); // hw info → BDM-030
+  set32(24, 0x00000500); // hw info: board-model nibble in byte 1 (hwToBoardModel reads (v >> 8) & 0xff) → BDM-030
   set32(28, 0x03260104); // fw version
   set16(44, 0x0100); // fw update version
   r[46] = 0x00; // fw update info

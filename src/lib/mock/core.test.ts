@@ -340,8 +340,8 @@ describe('canned DS5 feature replies (#123)', () => {
     const buildTime = String.fromCharCode(...out.slice(12, 20));
     expect(buildTime).toMatch(/^\d{2}:\d{2}:\d{2}$/);
     const view = new DataView(new Uint8Array(out).buffer);
-    // hw info byte 2 = 0x05 → hwToBoardModel resolves "BDM-030".
-    expect((view.getUint32(24, true) >>> 16) & 0xff).toBe(0x05);
+    // hw info byte 1 = 0x05 → hwToBoardModel ((hwinfo >> 8) & 0xff) resolves "BDM-030".
+    expect((view.getUint32(24, true) >>> 8) & 0xff).toBe(0x05);
     expect(view.getUint16(20, true)).toBeGreaterThan(0); // fw type
     // The reply must survive resetMockState — the connect flow keeps working
     // after a mock-state reset (deliberately not staged via mockFeatureReplies).
