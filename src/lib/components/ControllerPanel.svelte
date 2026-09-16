@@ -49,6 +49,7 @@
     applyProcessedInput,
   } from '$lib/stores/controller';
   import { invoke } from '@tauri-apps/api/core';
+  import { DS5Controller } from '$lib/controllers/ds5-controller';
   import {
     createControllerManager,
     createControllerForDevice,
@@ -181,9 +182,17 @@
       await new Promise((r) => setTimeout(r, 80));
 
       const info = await ctrl.getInfo();
+      if (!info.ok) {
+        throw new Error(get(LL).controller.infoFailed({ error: String(info.error) }));
+      }
       controllerInfo.set(info);
       fwVersion = info.infoItems?.find((i) => i.key === 'FW Version')?.value ?? '—';
       macAddress = info.infoItems?.find((i) => i.key === 'Bluetooth Address')?.value ?? '—';
+      // Lightbar-Baseline: hebt den Kernel-LIGHT_OUT-Zustand auf und bestätigt mit
+      // einem blauen Lichtblitz, dass Writes ankommen. Nicht fatal bei Fehlern.
+      if (ctrl instanceof DS5Controller) {
+        await ctrl.initializeCurrentOutputState();
+      }
       pushControllerLog(get(LL).controller.connectedLog({ model: ctrl.getModel() }), 'info');
       // Snapshot the in-memory finetune data so "Verwerfen" can undo calibration
       // changes made this session back to the connected state.

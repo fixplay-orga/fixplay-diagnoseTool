@@ -1823,6 +1823,11 @@ type RootTranslation = {
 		 */
 		connectFailedLog: RequiredParams<'error'>
 		/**
+		 * I​n​f​o​-​A​b​r​u​f​ ​f​e​h​l​g​e​s​c​h​l​a​g​e​n​:​ ​{​e​r​r​o​r​}
+		 * @param {unknown} error
+		 */
+		infoFailed: RequiredParams<'error'>
+		/**
 		 * C​o​n​t​r​o​l​l​e​r​ ​g​e​t​r​e​n​n​t
 		 */
 		disconnectedLog: string
@@ -5074,6 +5079,10 @@ export type TranslationFunctions = {
 		 * Verbindung fehlgeschlagen: {error}
 		 */
 		connectFailedLog: (arg: { error: unknown }) => LocalizedString
+		/**
+		 * Info-Abruf fehlgeschlagen: {error}
+		 */
+		infoFailed: (arg: { error: unknown }) => LocalizedString
 		/**
 		 * Controller getrennt
 		 */

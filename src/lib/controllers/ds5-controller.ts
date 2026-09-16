@@ -291,18 +291,28 @@ export class DS5Controller extends BaseController {
     this.currentOutputState = { ...outputStruct.state };
   }
 
+  /**
+   * Connect baseline: enable the lightbar setup group (flag2 bit1), switch the
+   * lightbar to light-on (undoes the kernel driver's LIGHT_OUT faded state),
+   * request full LED brightness and set blue — a visible confirmation that
+   * output writes reach the pad. Failures are logged, not fatal (USB writes
+   * themselves are verified by hid.rs, see #115).
+   */
   async initializeCurrentOutputState(): Promise<void> {
     try {
       this.currentOutputState = {
         ...this.currentOutputState,
-        validFlag1: 0b1111_0111,
+        validFlag1: DS5_VALID_FLAG1.LIGHTBAR_COLOR,
+        validFlag2: DS5_VALID_FLAG2.LIGHTBAR_SETUP_CONTROL_ENABLE,
+        lightbarSetup: DS5_LIGHTBAR_SETUP.LIGHT_ON,
+        ledBrightness: 255,
         ledCRed: 0,
         ledCGreen: 0,
         ledCBlue: 255,
       };
-      const resetOutputStruct = new DS5OutputStruct(this.currentOutputState);
-      await this.sendOutputReport(resetOutputStruct.pack(), 'init default states');
-      this.updateCurrentOutputState(resetOutputStruct);
+      const outputStruct = new DS5OutputStruct(this.currentOutputState);
+      await this.sendOutputReport(outputStruct.pack(), 'init default states');
+      this.updateCurrentOutputState(outputStruct);
     } catch (error) {
       console.warn('Failed to initialize DS5 output state:', error);
     }
@@ -857,9 +867,9 @@ export class DS5Controller extends BaseController {
         cableConnected = true;
         break;
       case 15:
-        chargeLevel = 0;
-        isCharging = true;
-        cableConnected = true;
+        // 0xF = no battery / error condition — NOT "charging 0 %" (old behaviour
+        // showed a charging bolt on an empty pad).
+        isError = true;
         break;
       case 11:
       default:

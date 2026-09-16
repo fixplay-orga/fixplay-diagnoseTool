@@ -513,6 +513,7 @@ const de: BaseTranslation = {
     clearLogTitle: 'Protokoll löschen',
     connectedLog: 'Controller verbunden: {model}',
     connectFailedLog: 'Verbindung fehlgeschlagen: {error}',
+    infoFailed: 'Info-Abruf fehlgeschlagen: {error}',
     disconnectedLog: 'Controller getrennt',
     flashFailedLog: 'Flash fehlgeschlagen: {error}',
     undoLog: 'Kalibrierungsänderungen verworfen (in-memory zurückgesetzt)',

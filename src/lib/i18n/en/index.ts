@@ -502,6 +502,7 @@ const en: Translation = {
     clearLogTitle: 'Clear log',
     connectedLog: 'Controller connected: {model}',
     connectFailedLog: 'Connection failed: {error}',
+    infoFailed: 'Failed to read controller info: {error}',
     disconnectedLog: 'Controller disconnected',
     flashFailedLog: 'Flash failed: {error}',
     undoLog: 'Calibration changes discarded (in-memory reset)',

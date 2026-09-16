@@ -183,6 +183,34 @@ describe('flag2 / lightbar_setup region (#111)', () => {
   });
 });
 
+describe('connect baseline + battery 0xF (#112)', () => {
+  it('initializeCurrentOutputState flashes blue with the lightbar setup enabled', async () => {
+    const device = makeFakeDevice();
+    const ctrl = new DS5Controller(device);
+    await ctrl.initializeCurrentOutputState();
+    const out = device.lastOut()!;
+    expect(out.data[1] & 0x04).toBe(0x04); // flag1 LIGHTBAR_COLOR
+    expect(out.data[38]).toBe(0x02); // flag2 enable
+    expect(out.data[41]).toBe(0x00); // light-on
+    expect(out.data[42]).toBe(255); // volle Helligkeit
+    expect(out.data[44]).toBe(0);
+    expect(out.data[45]).toBe(0);
+    expect(out.data[46]).toBe(255); // blau
+  });
+
+  it('parseBatteryStatus treats status 0xF as an error, not as charging', () => {
+    const device = makeFakeDevice();
+    const ctrl = new DS5Controller(device);
+    const buf = new ArrayBuffer(64);
+    const view = new DataView(buf);
+    view.setUint8(52, 0xf0); // status 0xF, charge 0
+    const s = ctrl.parseBatteryStatus(view);
+    expect(s.is_error).toBe(true);
+    expect(s.is_charging).toBe(false);
+    expect(s.cable_connected).toBe(false);
+  });
+});
+
 describe('ControllerManager input parsing (transport-aware)', () => {
   function buildUsbReport(): Uint8Array {
     const r = new Uint8Array(64);
