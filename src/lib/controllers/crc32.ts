@@ -6,6 +6,7 @@
 //
 //   - output report 0x31: prefix bytes [0xA2, 0x31] before the frame body
 //   - feature reports:    prefix bytes [0x53, reportId] before the report body
+//   - input report 0x31:  prefix bytes [0xA1, 0xB2] before the input payload
 //
 // Polynomial 0xEDB88320 (reflected), init/xorout 0xFFFFFFFF — the standard
 // crc32_le the kernel/hid-playstation uses, and the same algorithm daidr's
@@ -78,4 +79,27 @@ export function fillFeatureReportCrc(reportId: number, report: Uint8Array): void
   report[off + 1] = (crc >>> 8) & 0xff;
   report[off + 2] = (crc >>> 16) & 0xff;
   report[off + 3] = (crc >>> 24) & 0xff;
+}
+
+/** Validate the CRC32 trailer of a BT input report (report id 0x31, id byte
+ * already stripped by the Rust layer). Payload = [seq, …data…, CRC32-LE],
+ * CRC seeded over [0xA1, 0xB2] (kernel hid-playstation.c:
+ * dualsense_input_report_bt). Returns false for too-short frames or mismatch. */
+export function validateBtInputCrc(report: Uint8Array): boolean {
+  if (report.length < 77) return false;
+  const end = report.length - 4;
+  const got =
+    (report[end] | (report[end + 1] << 8) | (report[end + 2] << 16) | (report[end + 3] << 24)) >>> 0;
+  return crc32(report.subarray(0, end), [0xa1, 0xb2]) === got;
+}
+
+/** Fill the CRC32 trailer in place (same framing as validateBtInputCrc) —
+ * used by the mock layer and the tests to build valid frames. */
+export function fillBtInputCrc(report: Uint8Array): void {
+  const end = report.length - 4;
+  const c = crc32(report.subarray(0, end), [0xa1, 0xb2]);
+  report[end] = c & 0xff;
+  report[end + 1] = (c >>> 8) & 0xff;
+  report[end + 2] = (c >>> 16) & 0xff;
+  report[end + 3] = (c >>> 24) & 0xff;
 }

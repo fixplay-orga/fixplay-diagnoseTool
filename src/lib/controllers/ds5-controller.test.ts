@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { crc32, fillOutputReportCrc, fillFeatureReportCrc } from './crc32';
+import {
+  crc32,
+  fillOutputReportCrc,
+  fillFeatureReportCrc,
+  fillBtInputCrc,
+} from './crc32';
 import { DS5Controller } from './ds5-controller';
 import { ControllerManager, createControllerForDevice } from './controller-manager';
 import type { HIDDeviceLike, HIDInputReportEvent } from './base-controller';
@@ -304,8 +309,9 @@ describe('ControllerManager input parsing (transport-aware)', () => {
     // BT input frame after Rust strips report id: [seq, common0..common46, ...].
     const common = buildUsbReport().subarray(0, 47);
     const bt = new Uint8Array(77);
-    bt[0] = 0x40; // seq<<4
+    bt[0] = 0x40; // seq<<2 (seq = 0x40 >> 2 = 16)
     bt.set(common, 1);
+    fillBtInputCrc(bt); // #118: BT input frames are CRC-validated and dropped otherwise
     mgr.processControllerInput({ data: new DataView(bt.buffer), reportId: 0x31 });
     expect(ctrl.transport).toBe('bt');
     expect(captured!.sticks).toEqual({ left: { x: -1, y: 1 }, right: { x: -1, y: 1 } });
@@ -314,6 +320,43 @@ describe('ControllerManager input parsing (transport-aware)', () => {
     expect(captured!.cross).toBe(true);
     expect(captured!.l1).toBe(true);
     expect(captured!.ps).toBe(true);
+  });
+
+  it('drops BT frames with a bad CRC and counts crcErrors (#118)', () => {
+    const dev = makeFakeDevice();
+    const ctrl = new DS5Controller(dev);
+    const mgr = new ControllerManager();
+    mgr.setControllerInstance(ctrl);
+    let handled = false;
+    mgr.setInputHandler(() => {
+      handled = true;
+    });
+    // No CRC trailer filled → validation must reject the frame.
+    const frame = new Uint8Array(77);
+    frame[0] = 0x04; // seq
+    mgr.processControllerInput({ data: new DataView(frame.buffer), reportId: 0x31 });
+    expect(mgr.getTransportStats().crcErrors).toBe(1);
+    // Keine Button-Änderungen durch die korrupte Frame — der Handler lief nicht.
+    expect(handled).toBe(false);
+    // Corrupted frames are not counted as received reports.
+    expect(mgr.getTransportStats().reports).toBe(0);
+  });
+
+  it('counts seq gaps as packet loss (#118)', () => {
+    const dev = makeFakeDevice();
+    const ctrl = new DS5Controller(dev);
+    const mgr = new ControllerManager();
+    mgr.setControllerInstance(ctrl);
+    for (const seq of [0, 1, 3, 6]) {
+      // Lücke 1→3 = 1 verlorener, 3→6 = 2 verlorene
+      const f = new Uint8Array(77);
+      f[0] = seq << 2;
+      fillBtInputCrc(f);
+      mgr.processControllerInput({ data: new DataView(f.buffer), reportId: 0x31 });
+    }
+    expect(mgr.getTransportStats().reports).toBe(4);
+    expect(mgr.getTransportStats().seqGaps).toBe(3);
+    expect(mgr.getTransportStats().lastSeq).toBe(6);
   });
 });
 

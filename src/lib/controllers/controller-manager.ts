@@ -2,6 +2,7 @@
 // Ported from dualshock-tools/js/controller-manager.js
 
 import { BaseController } from './base-controller';
+import type { ControllerTransport } from './base-controller';
 import { DS5Controller } from './ds5-controller';
 import type {
   InputConfig,
@@ -11,6 +12,7 @@ import type {
   HIDDeviceLike,
   HIDInputReportEvent,
 } from './base-controller';
+import { validateBtInputCrc } from './crc32';
 import { sleep } from './utils';
 
 /** DualSense Bluetooth input report id (USB is 0x01). Used for transport detection. */
@@ -119,8 +121,24 @@ export class ControllerManager {
   };
   private _lastBatteryText = '';
 
+  /** Per-BT-transport statistics for the BT connection test (#119) and the
+   * status row (#124). seq is 6-bit and wraps, so gap math is mod 64. */
+  private transportStats = { reports: 0, seqGaps: 0, crcErrors: 0, lastSeq: null as number | null };
+
   setControllerInstance(instance: BaseController | null): void {
     this.currentController = instance;
+  }
+
+  getTransport(): ControllerTransport {
+    return this.currentController?.transport ?? 'usb';
+  }
+
+  resetTransportStats(): void {
+    this.transportStats = { reports: 0, seqGaps: 0, crcErrors: 0, lastSeq: null };
+  }
+
+  getTransportStats(): { reports: number; seqGaps: number; crcErrors: number; lastSeq: number | null } {
+    return { ...this.transportStats };
   }
 
   getDevice(): HIDDeviceLike | null {
@@ -427,6 +445,24 @@ export class ControllerManager {
     // offsets the USB path uses (sticks @0-3, dpad @7, triggers @4/5, …).
     if (reportId === DS5_BT_INPUT_REPORT_ID) {
       this.currentController.setTransport('bt');
+      // BT input framing (#118): payload after the (already-stripped) report
+      // id is [seq, …body…, CRC32-LE], CRC over the payload minus the 4
+      // trailer bytes with seed [0xA1, 0xB2] (kernel hid-playstation.c:
+      // dualsense_input_report_bt). Corrupted frames are dropped before any
+      // button/touch/IMU state is touched.
+      const raw = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+      if (!validateBtInputCrc(raw)) {
+        this.transportStats.crcErrors++;
+        return; // corrupted frame — do not feed buttons/touch/IMU
+      }
+      const seq = (raw[0] >> 2) & 0x3f;
+      const s = this.transportStats;
+      if (s.lastSeq !== null) {
+        const gap = (seq - s.lastSeq) & 0x3f;
+        if (gap > 1) s.seqGaps += gap - 1;
+      }
+      s.lastSeq = seq;
+      s.reports++;
     } else if (reportId !== undefined) {
       this.currentController.setTransport('usb');
     }

@@ -198,8 +198,14 @@
         }
       }, 16);
 
-      // Brief pause for the first input report to arrive and set transport.
-      await new Promise((r) => setTimeout(r, 80));
+      // Wait (max 1.5 s) for the first input report to set the transport.
+      // Feature reports over BT need CRC framing; sending earlier would be
+      // dropped silently by the controller. The poll interval is already
+      // running and feeding inputs.
+      const deadline = Date.now() + 1500;
+      while (manager && manager.getTransport() === 'usb' && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 16));
+      }
 
       const devInfo = await ctrl.getInfo();
       if (!devInfo.ok) {
