@@ -171,6 +171,16 @@ describe('flag2 / lightbar_setup region (#111)', () => {
     await ctrl.setLedBrightness(-10);
     expect(device.lastOut()!.data[42]).toBe(0);
   });
+
+  it('explicit brightness 0 survives the next color write (no || 255 fallback)', async () => {
+    const device = makeFakeDevice();
+    const ctrl = new DS5Controller(device);
+    await ctrl.setLedBrightness(0);
+    expect(device.lastOut()!.data[42]).toBe(0);
+    await ctrl.setLightbarColor(10, 20, 30);
+    expect(device.lastOut()!.data[42]).toBe(0); // not re-sent as 255
+    expect(device.lastOut()!.data[44]).toBe(10);
+  });
 });
 
 describe('ControllerManager input parsing (transport-aware)', () => {

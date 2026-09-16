@@ -148,7 +148,11 @@ function defaultOutputState(): OutputState {
     muteLedControl: 0,
     powerSaveMuteControl: 0,
     lightbarSetup: 0,
-    ledBrightness: 0,
+    // Seeded at full brightness so the `?? 255` fallback in the lightbar
+    // writers only fires for the never-set case — an explicit
+    // setLedBrightness(0) would otherwise be silently overwritten to 255 by
+    // the next color/setup write.
+    ledBrightness: 255,
     playerIndicator: 0,
     ledCRed: 0,
     ledCGreen: 0,
@@ -729,7 +733,7 @@ export class DS5Controller extends BaseController {
         ledCGreen: Math.max(0, Math.min(255, green)),
         ledCBlue: Math.max(0, Math.min(255, blue)),
         lightbarSetup: DS5_LIGHTBAR_SETUP.LIGHT_ON,
-        ledBrightness: this.currentOutputState.ledBrightness || 255,
+        ledBrightness: this.currentOutputState.ledBrightness ?? 255,
         validFlag1: validFlag1 | DS5_VALID_FLAG1.LIGHTBAR_COLOR,
         validFlag2: validFlag2 | DS5_VALID_FLAG2.LIGHTBAR_SETUP_CONTROL_ENABLE,
       });
@@ -786,7 +790,7 @@ export class DS5Controller extends BaseController {
         ...this.currentOutputState,
         lightbarSetup:
           mode === 'light-out' ? DS5_LIGHTBAR_SETUP.LIGHT_OUT : DS5_LIGHTBAR_SETUP.LIGHT_ON,
-        ledBrightness: this.currentOutputState.ledBrightness || 255,
+        ledBrightness: this.currentOutputState.ledBrightness ?? 255,
         validFlag2: validFlag2 | DS5_VALID_FLAG2.LIGHTBAR_SETUP_CONTROL_ENABLE,
       });
       await this.sendOutputReport(outputStruct.pack(), 'set lightbar setup');
