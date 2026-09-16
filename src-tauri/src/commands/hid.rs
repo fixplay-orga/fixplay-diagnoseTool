@@ -46,12 +46,17 @@ pub enum HidCmd {
 }
 
 /// Pure check of the hidapi write result against the expected payload length
-/// (unit-testable, German user-facing message).
+/// (unit-testable, German user-facing message). A write is only rejected when
+/// fewer bytes than expected were reported. hidapi's Windows backend PADS any
+/// write shorter than the device's `OutputReportByteLength` up to that length
+/// and returns the padded count (`windows/hid.c`, `hid_write`), so a
+/// DualSense output write of 48 bytes returns 63 on Windows while Linux
+/// hidraw returns the exact 48 — `written >= expected` accepts both.
 fn check_write_result(written: usize, expected: usize) -> Result<usize, String> {
-    if written == expected {
+    if written >= expected {
         Ok(written)
     } else {
-        Err(format!("HID-Write unvollständig: {written} von {expected} Bytes"))
+        Err(format!("HID-Write unvollständig: nur {written} von {expected} Bytes geschrieben"))
     }
 }
 
@@ -544,6 +549,14 @@ mod tests {
     #[test]
     fn write_output_check_zero_bytes_is_err() {
         assert!(check_write_result(0, 47).is_err());
+    }
+
+    #[test]
+    fn write_output_check_windows_padded_write_is_ok() {
+        // hidapi's Windows hid_write pads the 48-byte DualSense output report
+        // up to OutputReportByteLength (63) and returns the padded count —
+        // an over-long result must not reject the write (final-review C2).
+        assert_eq!(check_write_result(63, 48), Ok(63));
     }
 
     #[test]

@@ -17,6 +17,21 @@ import { sleep } from './utils';
 /** DualSense Bluetooth input report id (USB is 0x01). Used for transport detection. */
 const DS5_BT_INPUT_REPORT_ID = 0x31;
 
+/**
+ * Lost-frame count between two BT input sequence numbers (seq is cyclic mod 64).
+ * A plausible forward jump of `gap` reports means `gap - 1` lost frames; a
+ * duplicate/backward step counts 0. A gap of ≥ 32 (half the window) is
+ * implausible for a real loss — a reordered or duplicated frame pair reads as
+ * a huge forward jump — so it is treated as a resync: `lastSeq` is updated
+ * without counting phantom losses (final-review M1). Pure so it is
+ * unit-testable without a controller.
+ */
+export function btSeqGapLoss(lastSeq: number, seq: number): number {
+  const gap = (seq - lastSeq) & 0x3f;
+  if (gap >= 32) return 0; // resync — reorder/duplicate artifact, not a loss
+  return gap > 1 ? gap - 1 : 0;
+}
+
 export interface StickPosition {
   x: number;
   y: number;
@@ -440,11 +455,13 @@ export class ControllerManager {
     // offsets the USB path uses (sticks @0-3, dpad @7, triggers @4/5, …).
     if (reportId === DS5_BT_INPUT_REPORT_ID) {
       this.currentController.setTransport('bt');
-      // BT input framing (#118): payload after the (already-stripped) report
-      // id is [seq, …body…, CRC32-LE], CRC over the payload minus the 4
-      // trailer bytes with seed [0xA1, 0xB2] (kernel hid-playstation.c:
-      // dualsense_input_report_bt). Corrupted frames are dropped before any
-      // button/touch/IMU state is touched.
+      // BT input framing (#118, final-review C1): payload after the
+      // (already-stripped) report id is [seq, …body…, CRC32-LE], CRC over the
+      // payload minus the 4 trailer bytes with seed [0xA1, 0x31] — the kernel
+      // (hid-playstation.c dualsense_parse_report, PS_INPUT_CRC32_SEED) CRCs
+      // the full wire frame incl. the 0x31 id byte, which the Rust layer
+      // strips. Corrupted frames are dropped before any button/touch/IMU
+      // state is touched.
       const raw = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
       if (!validateBtInputCrc(raw)) {
         this.transportStats.crcErrors++;
@@ -452,10 +469,7 @@ export class ControllerManager {
       }
       const seq = (raw[0] >> 2) & 0x3f;
       const s = this.transportStats;
-      if (s.lastSeq !== null) {
-        const gap = (seq - s.lastSeq) & 0x3f;
-        if (gap > 1) s.seqGaps += gap - 1;
-      }
+      if (s.lastSeq !== null) s.seqGaps += btSeqGapLoss(s.lastSeq, seq);
       s.lastSeq = seq;
       s.reports++;
     } else if (reportId !== undefined) {

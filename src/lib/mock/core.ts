@@ -163,7 +163,7 @@ function btOutputCrcValid(data: number[]): boolean {
 /**
  * Build a 77-byte BT input payload exactly as the Rust HID layer would deliver
  * it after stripping the report id (#123): `[seq<<2, …body…, CRC32-LE]`, CRC
- * over seed [0xA1, 0xB2] via fillBtInputCrc (validateBtInputCrc framing). The
+ * over seed [0xA1, 0x31] via fillBtInputCrc (validateBtInputCrc framing — the
  * seq lives in the top 6 bits of byte 0 — the receiver reads
  * `(raw[0] >> 2) & 0x3f` and counts cyclic mod 64. The 64-byte USB body is
  * placed at offset 1 so every common offset (sticks @0-3, battery @52, …)
@@ -191,6 +191,60 @@ const MOCK_SYSTEM_INFO = 'XXXXZB0001-MOCK01';
 const MOCK_BD_ADDR = [0xa4, 0xb5, 0xc6, 0xd7, 0xe8, 0xf9];
 /** In-memory module blob: 12 u16 stick-calibration values (center-ish). */
 const MOCK_MODULE_DATA = [0x0400, 0x0400, 0x0800, 0x0800, 0x0c00, 0x0c00, 0, 0, 0, 0, 0, 0];
+
+/**
+ * Canned, protocol-correct DS5 device-info reply for feature report 0x20
+ * (final-review I2). Byte layout mirrors every offset ds5-controller's
+ * `_getInfo` parses from the 64-byte GET_REPORT(0x20) reply:
+ *
+ *   [0]      reply id 0x20 (validation gate: `cmd != 0x20` → ok:false)
+ *   [1..12]  build date  (11 bytes ASCII — must NOT contain " 2020"/" 2021",
+ *            which would set disable_bits |= 2)
+ *   [12..20] build time  (8 bytes)
+ *   [20]     fw type     u16 LE   (0x0001)
+ *   [22]     fw series   u16 LE   (0x0019)
+ *   [24]     hw info     u32 LE   (byte 2 = 0x05 → Board Model "BDM-030")
+ *   [28]     fw version  u32 LE
+ *   [44]     fw update   u16 LE   (0x0100)
+ *   [46]     fw update info u8
+ *   [48]     SBL fw version   u32 LE
+ *   [52]     Venom fw version u32 LE
+ *   [56]     Spider fw version u32 LE
+ *
+ * The legacy `i % 256` ramp dummy failed the [0] gate, so every MOCK=1
+ * connect threw "Info-Abruf fehlgeschlagen" and snapshotCalibration() never
+ * ran ("Verwerfen" stayed disabled). Module-level constant — deliberately not
+ * routed through `mockFeatureReplies`/`resetMockState`, so the connect flow
+ * survives a mock-state reset like the ramp dummy did.
+ */
+const MOCK_DEVICE_INFO = (() => {
+  const r = new Array<number>(64).fill(0);
+  r[0] = 0x20;
+  const date = '2024-05-20 '; // 11 bytes incl. pad
+  const time = '08:07:59'; // 8 bytes
+  for (let i = 0; i < 11; i++) r[1 + i] = date.charCodeAt(i);
+  for (let i = 0; i < 8; i++) r[12 + i] = time.charCodeAt(i);
+  const set16 = (off: number, v: number) => {
+    r[off] = v & 0xff;
+    r[off + 1] = (v >> 8) & 0xff;
+  };
+  const set32 = (off: number, v: number) => {
+    r[off] = v & 0xff;
+    r[off + 1] = (v >> 8) & 0xff;
+    r[off + 2] = (v >> 16) & 0xff;
+    r[off + 3] = (v >> 24) & 0xff;
+  };
+  set16(20, 0x0001); // fw type
+  set16(22, 0x0019); // fw series (25)
+  set32(24, 0x00050000); // hw info → BDM-030
+  set32(28, 0x03260104); // fw version
+  set16(44, 0x0100); // fw update version
+  r[46] = 0x00; // fw update info
+  set32(48, 0x00010001); // SBL fw version
+  set32(52, 0x00000000); // Venom fw version
+  set32(56, 0x00000000); // Spider fw version
+  return r;
+})();
 
 /**
  * Fill `mockFeatureReplies` the way a real DS5 answers the feature protocol
@@ -438,6 +492,13 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
   hid_receive_feature_report: (args) => {
     const reportId = Number(args?.reportId ?? 0);
     const len = Number(args?.length ?? 64);
+    // Device-info GET_REPORT(0x20): a real DS5 answers directly (no preceding
+    // send), so the canned reply is served here — not via stageDs5FeatureReply
+    // (final-review I2: _getInfo's ok-gate made the legacy ramp dummy fail
+    // every MOCK connect).
+    if (reportId === 0x20) {
+      return MOCK_DEVICE_INFO.slice(0, len);
+    }
     const staged = mockFeatureReplies.get(reportId);
     if (staged) {
       const out = staged.slice(0, len);

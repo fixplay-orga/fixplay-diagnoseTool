@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyDeadzone } from './controller-manager';
+import { applyDeadzone, btSeqGapLoss } from './controller-manager';
 
 /**
  * Unit tests for the radial stick deadzone (#124). The function is pure and
@@ -35,5 +35,35 @@ describe('applyDeadzone (#124)', () => {
     // |(0, 0.08)| < 0.1 → zeroed, even though the y value alone might look
     // "usable" to a per-axis filter.
     expect(applyDeadzone(0, 0.08, 10)).toEqual({ x: 0, y: 0 });
+  });
+});
+
+/**
+ * BT input seq-gap loss counting (final-review M1): consecutive frames count
+ * 0, a forward jump counts gap - 1, and an implausibly large mod-64 gap
+ * (≥ 32 = half the window — what a reordered/duplicated frame pair reads as)
+ * must NOT be counted as phantom losses.
+ */
+describe('btSeqGapLoss (#M1 — BT seq-gap resync)', () => {
+  it('counts 0 for consecutive and duplicate frames', () => {
+    expect(btSeqGapLoss(5, 6)).toBe(0);
+    expect(btSeqGapLoss(5, 5)).toBe(0); // duplicate
+  });
+
+  it('counts gap - 1 losses for a plausible forward jump', () => {
+    expect(btSeqGapLoss(5, 8)).toBe(2);
+    // Just below the resync threshold: gap 31 = worst case still counted.
+    expect(btSeqGapLoss(5, 36)).toBe(30);
+  });
+
+  it('treats a backward step as a resync (no phantom losses)', () => {
+    // 5 → 4 mod 64 reads as gap 63 — a duplicate/reordered frame, not 62 losses.
+    expect(btSeqGapLoss(5, 4)).toBe(0);
+  });
+
+  it('treats a forward jump ≥ 32 as a resync (half the window)', () => {
+    expect(btSeqGapLoss(5, 37)).toBe(0); // gap 32
+    expect(btSeqGapLoss(0, 33)).toBe(0); // gap 33
+    expect(btSeqGapLoss(1, 0)).toBe(0); // gap 63 (max — reads as a backward step)
   });
 });

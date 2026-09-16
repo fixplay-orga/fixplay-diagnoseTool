@@ -323,6 +323,35 @@ describe('canned DS5 feature replies (#123)', () => {
     resetMockState();
     expect(mockFeatureReplies.size).toBe(0);
   });
+
+  it('answers GET_REPORT(0x20) with a protocol-correct device-info reply (final-review I2)', async () => {
+    // ds5-controller's _getInfo parses reply[0] (must be 0x20 — the legacy
+    // i % 256 ramp dummy failed this gate and broke every MOCK connect),
+    // build date/time ASCII, u16@20/22/44, u32@24/28/48/52/56.
+    const out = await invoke<number[]>('hid_receive_feature_report', {
+      reportId: 0x20,
+      length: 64,
+    });
+    expect(out).toHaveLength(64);
+    expect(out[0]).toBe(0x20);
+    const buildDate = String.fromCharCode(...out.slice(1, 12));
+    // disable_bits |= 2 gate in _getInfo: no " 2020"/" 2021" in the date.
+    expect(buildDate).not.toMatch(/ 2020| 2021/);
+    const buildTime = String.fromCharCode(...out.slice(12, 20));
+    expect(buildTime).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+    const view = new DataView(new Uint8Array(out).buffer);
+    // hw info byte 2 = 0x05 → hwToBoardModel resolves "BDM-030".
+    expect((view.getUint32(24, true) >>> 16) & 0xff).toBe(0x05);
+    expect(view.getUint16(20, true)).toBeGreaterThan(0); // fw type
+    // The reply must survive resetMockState — the connect flow keeps working
+    // after a mock-state reset (deliberately not staged via mockFeatureReplies).
+    resetMockState();
+    const out2 = await invoke<number[]>('hid_receive_feature_report', {
+      reportId: 0x20,
+      length: 64,
+    });
+    expect(out2[0]).toBe(0x20);
+  });
 });
 
 describe('mock BT transport simulation (#123)', () => {
@@ -342,7 +371,7 @@ describe('mock BT transport simulation (#123)', () => {
     expect(rep.report_id).toBe(0x31);
     expect(rep.data).toHaveLength(77);
     const raw = new Uint8Array(rep.data);
-    // CRC over seed [0xA1,0xB2] must validate — the ControllerManager drops
+    // CRC over seed [0xA1,0x31] must validate — the ControllerManager drops
     // frames that fail validateBtInputCrc (#118).
     expect(validateBtInputCrc(raw)).toBe(true);
     const seq0 = (raw[0] >> 2) & 0x3f;

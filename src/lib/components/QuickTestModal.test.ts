@@ -154,4 +154,36 @@ describe('QuickTestModal lifecycle (#122)', () => {
     expect(completedLights()).toHaveLength(1);
     expect(screen.getByTestId('status-lights')).toHaveTextContent(/ok/i);
   });
+
+  it('close() mid-haptic-test gates the re-buzz (final-review M2)', async () => {
+    vi.useFakeTimers();
+    const manager = makeManager('usb');
+    render(QuickTestModal, { props: { open: true, manager, transport: 'usb' } });
+
+    // Start the haptic test: heavy motor on.
+    await fireEvent.click(screen.getByTestId('test-haptic'));
+    expect(manager.setVibration).toHaveBeenCalledWith(255, 0);
+
+    // Close mid-test — close() silences the actuators once.
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    expect(manager.setVibration).toHaveBeenCalledWith(0, 0);
+
+    // Advance past the haptic chain's first delay: the stale continuation must
+    // NOT re-buzz with the light motor (that would override close()'s reset).
+    await vi.advanceTimersByTimeAsync(700);
+    expect(manager.setVibration).not.toHaveBeenCalledWith(0, 255);
+  });
+
+  it('stale haptic continuation does not overwrite a newer test status (final-review M2)', async () => {
+    vi.useFakeTimers();
+    const manager = makeManager('usb');
+    render(QuickTestModal, { props: { open: true, manager, transport: 'usb' } });
+    await fireEvent.click(screen.getByTestId('test-haptic'));
+    // A newer run replaces the haptic test; the stale chain must neither
+    // re-buzz nor flip the row's status after the newer run owns the UI.
+    await fireEvent.click(screen.getByTestId('test-lights'));
+    await vi.advanceTimersByTimeAsync(700);
+    expect(manager.setVibration).not.toHaveBeenCalledWith(0, 255);
+    expect(screen.getByTestId('status-haptic')).toHaveTextContent(/running/i);
+  });
 });

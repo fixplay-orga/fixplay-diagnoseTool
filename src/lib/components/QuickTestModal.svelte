@@ -286,14 +286,22 @@
   async function runTest(id: TestId) {
     if (!manager) return;
     const token = ++actuatorToken;
+    // A stale continuation (modal closed, or a newer test started) must bail
+    // WITHOUT writing status or re-triggering actuators — same contract as the
+    // speaker doneCb's token check (final-review M2, extends #122).
+    const stale = () => token !== actuatorToken;
     statuses[id] = 'running';
     try {
       switch (id) {
         case 'haptic':
           await manager.setVibration(255, 0);
+          if (stale()) return; // do not re-buzz over close()'s resetActuators
           await new Promise((r) => setTimeout(r, 500));
+          if (stale()) return;
           await manager.setVibration(0, 255);
+          if (stale()) return;
           await new Promise((r) => setTimeout(r, 500));
+          if (stale()) return;
           await manager.setVibration(0, 0);
           statuses[id] = 'pass';
           break;
@@ -302,7 +310,9 @@
             { mode: 'resistance', force: 255, start: 0, end: 320 },
             { mode: 'resistance', force: 255, start: 0, end: 320 }
           );
+          if (stale()) return; // a stale tail must not write "off" over a newer run
           await new Promise((r) => setTimeout(r, 3000));
+          if (stale()) return;
           await manager.setAdaptiveTrigger(
             { mode: 'off', force: 0, start: 0, end: 0 },
             { mode: 'off', force: 0, start: 0, end: 0 }
@@ -331,6 +341,7 @@
           micActive = true;
           // Wait 500ms for the mic level meter to stabilise, then check presence
           await new Promise((r) => setTimeout(r, 500));
+          if (stale()) return; // a stale verdict must not clobber a newer run
           if ($micConnected) {
             statuses[id] = 'pass';
             pushControllerLog(get(LL).quickTest.micDetectedLog(), 'info');
@@ -348,6 +359,8 @@
         pushControllerLog(get(LL).quickTest.testCompletedLog({ id }), 'info');
       }
     } catch (e) {
+      // A stale run's error must not overwrite a newer run's status (#122/M2).
+      if (stale()) return;
       statuses[id] = 'fail';
       pushControllerLog(
         get(LL).quickTest.testFailedLog({ id, error: e instanceof Error ? e.message : String(e) }),

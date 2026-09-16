@@ -43,13 +43,14 @@
     controllerModel,
     controllerInfo,
     controllerTransport,
-    batteryStatus,
     buttonState,
     triggerState,
     stickState,
     stickDeadzone,
     setStickDeadzonePercent,
     stickCircularity,
+    touchPoints,
+    batteryStatus,
     controllerLog,
     pushControllerLog,
     applyProcessedInput,
@@ -78,6 +79,15 @@
   let calibOpen = $state(false);
   let circOpen = $state(false);
   let quickTestOpen = $state(false);
+  // Modal mutual exclusion (final-review I3): at most ONE of the three modals
+  // (center calibration / range calibration / quick test) may be open — the
+  // 0x80/0x81- and 0x82/0x83-feature flows of two open modals would pair with
+  // each other's replies (spec §3.4). Enforced by disabling the other openers
+  // while one is open: a bare parent-side `open = false` would bypass the
+  // modals' own close() teardown (deferred 11(c)) and leak actuator writes
+  // (e.g. QuickTest's lights interval keeps cycling), so exclusion is gated
+  // at the openers instead.
+  let anyModalOpen = $derived(calibOpen || circOpen || quickTestOpen);
   let connecting = $state(false);
   let connectError = $state<string | null>(null);
   // Device picker: shown when several DualSenses (USB/BT) are listed at once.
@@ -210,13 +220,18 @@
         }
       }, 16);
 
-      // Wait (max 1.5 s) for the first input report to set the transport.
-      // Feature reports over BT need CRC framing; sending earlier would be
-      // dropped silently by the controller. The poll interval is already
-      // running and feeding inputs.
-      const deadline = Date.now() + 1500;
-      while (manager && manager.getTransport() === 'usb' && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 16));
+      // Wait (max 1.5 s) for the first input report to set the transport —
+      // but ONLY over Bluetooth (pid 0x0df2). USB pids never change the
+      // transport from its 'usb' default, so waiting would burn the full 1.5 s
+      // deadline on every USB connect (final-review I1). Over BT the wait is
+      // load-bearing: feature-report writes need CRC framing, and sending
+      // earlier would be dropped silently by the controller. The poll interval
+      // is already running and feeding inputs.
+      if (info.product_id === 0x0df2) {
+        const deadline = Date.now() + 1500;
+        while (manager && manager.getTransport() === 'usb' && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 16));
+        }
       }
 
       const devInfo = await ctrl.getInfo();
@@ -260,6 +275,21 @@
     buttonState.set({});
     triggerState.set({ l2: 0, r2: 0 });
     stickState.set({ left: { x: 0, y: 0 }, right: { x: 0, y: 0 } });
+    // Session-bound derived state the poll loop fills — the spec bug #10 list
+    // (final-review I4). Without the reset the previous session's circularity
+    // overlay and battery/mic/headphone badges linger after reconnecting
+    // (possibly a different pad) until the first report arrives.
+    stickCircularity.set({ left: null, right: null });
+    touchPoints.set([]);
+    batteryStatus.set({
+      charge_level: 0,
+      cable_connected: false,
+      is_charging: false,
+      is_error: false,
+      bat_txt: '',
+    });
+    micConnected.set(false);
+    headphoneConnected.set(false);
     pushControllerLog(get(LL).controller.disconnectedLog(), 'info');
   }
 
@@ -534,7 +564,7 @@
       <button
         class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
         onclick={() => (calibOpen = true)}
-        disabled={$controllerTransport === 'bt'}
+        disabled={$controllerTransport === 'bt' || anyModalOpen}
         title={$controllerTransport === 'bt'
           ? $LL.controller.btFeatureGate()
           : $LL.controller.calibration()}
@@ -545,7 +575,7 @@
       <button
         class="flex items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 text-sm text-white hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed"
         onclick={() => (circOpen = true)}
-        disabled={$controllerTransport === 'bt'}
+        disabled={$controllerTransport === 'bt' || anyModalOpen}
         title={$controllerTransport === 'bt'
           ? $LL.controller.btFeatureGate()
           : $LL.controller.circularity()}
@@ -556,6 +586,7 @@
       <button
         class="flex items-center gap-1.5 rounded-lg bg-purple-600 px-4 py-2 text-sm text-white hover:bg-purple-700"
         onclick={() => (quickTestOpen = true)}
+        disabled={anyModalOpen}
       >
         <Zap class="h-4 w-4" />
         {$LL.controller.quickTest()}
