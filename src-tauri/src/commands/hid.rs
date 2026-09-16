@@ -56,6 +56,19 @@ fn check_write_result(written: usize, expected: usize) -> Result<usize, String> 
 /// without limit.
 const MAX_REPORT_QUEUE: usize = 512;
 
+/// Consecutive read errors after which the reader thread declares the device
+/// gone (unplug). Below the threshold errors are tolerated with a backoff —
+/// a single failed read is not necessarily a disconnect.
+const MAX_CONSECUTIVE_READ_ERRORS: u32 = 3;
+
+fn reader_should_exit(consecutive_errors: u32) -> bool {
+    consecutive_errors >= MAX_CONSECUTIVE_READ_ERRORS
+}
+
+fn read_error_backoff_ms(consecutive_errors: u32) -> u64 {
+    (10u64 * consecutive_errors as u64).min(50)
+}
+
 /// Build a feature-report *send* packet: the report-id byte prepended to the
 /// payload (hidapi expects the id in byte 0). Extracted from `run_hid_thread`
 /// so the framing is unit-testable without a real device.
@@ -117,7 +130,7 @@ impl Drop for AliveGuard {
 fn run_hid_thread(
     device:  hidapi::HidDevice,
     cmd_rx:  mpsc::Receiver<HidCmd>,
-    shared:  &HidShared,
+    shared:  Arc<HidShared>,
     stop:    Arc<AtomicBool>,
     alive:   Arc<AtomicBool>,
 ) {
@@ -126,6 +139,10 @@ fn run_hid_thread(
     alive.store(true, Ordering::Relaxed);
     let mut buf = [0u8; 128];
     info!("HID reader thread started");
+
+    // Consecutive read errors — reset on every successful read, drives unplug
+    // detection (threshold) + backoff between retries.
+    let mut read_errors = 0u32;
 
     while !stop.load(Ordering::Relaxed) {
         // Drain all pending commands before doing a read
@@ -170,11 +187,27 @@ fn run_hid_thread(
             }
         }
 
-        // Read one input report — 5 ms timeout keeps the command loop responsive
-        if let Ok(n) = device.read_timeout(&mut buf, 5) {
-            if let Some(report) = parse_input_report(&buf, n) {
-                let mut q = shared.reports.lock().unwrap();
-                push_report(&mut q, &shared.dropped_reports, report);
+        // Read one input report — 5 ms timeout keeps the command loop responsive.
+        // Consecutive read errors are tolerated with a short backoff until the
+        // threshold declares the device gone (unplug detection).
+        match device.read_timeout(&mut buf, 5) {
+            Ok(n) => {
+                read_errors = 0;
+                if let Some(report) = parse_input_report(&buf, n) {
+                    let mut q = shared.reports.lock().unwrap();
+                    push_report(&mut q, &shared.dropped_reports, report);
+                }
+            }
+            Err(e) => {
+                read_errors += 1;
+                if reader_should_exit(read_errors) {
+                    info!("HID: {} aufeinanderfolgende Lesefehler — Gerät getrennt ({e})",
+                        MAX_CONSECUTIVE_READ_ERRORS);
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(
+                    read_error_backoff_ms(read_errors),
+                ));
             }
         }
     }
@@ -219,51 +252,74 @@ pub fn hid_list_devices() -> Result<Vec<HidDeviceInfo>, String> {
     Ok(list)
 }
 
-#[tauri::command]
-pub fn hid_connect(vendor_id: u16, product_id: u16, state: State<'_, AppState>) -> Result<(), String> {
-    // Stop any existing connection
-    if let Some(tx) = state.hid.cmd_tx.lock().unwrap().take() {
+/// Stop the reader thread and join it. Called AFTER a successful open of the
+/// new device (previously teardown ran BEFORE the open — a failed open then
+/// destroyed a working connection) and on disconnect.
+fn teardown_hid(hid: &HidShared) {
+    if let Some(tx) = hid.cmd_tx.lock().unwrap().take() {
         let _ = tx.send(HidCmd::Stop);
     }
-    if let Some(s) = state.hid.stop.lock().unwrap().take() {
+    if let Some(s) = hid.stop.lock().unwrap().take() {
         s.store(true, Ordering::Relaxed);
     }
-
-    let api    = HidApi::new().map_err(|e| e.to_string())?;
-    let device = api.open(vendor_id, product_id).map_err(|e| e.to_string())?;
-
-    let shared = Arc::clone(&state.hid);
-    let stop       = Arc::new(AtomicBool::new(false));
-    let stop_clone = Arc::clone(&stop);
-    let alive      = Arc::new(AtomicBool::new(true));
-    let alive_clone = Arc::clone(&alive);
-    let (cmd_tx, cmd_rx) = mpsc::sync_channel::<HidCmd>(32);
-
-    *shared.cmd_tx.lock().unwrap() = Some(cmd_tx);
-    *shared.stop.lock().unwrap()   = Some(stop);
-    *shared.alive.lock().unwrap()  = Some(alive);
-    shared.reports.lock().unwrap().clear();
-    shared.dropped_reports.store(0, Ordering::Relaxed);
-
-    let handle = std::thread::spawn(move || run_hid_thread(device, cmd_rx, &shared, stop_clone, alive_clone));
-    *state.hid.thread.lock().unwrap() = Some(handle);
-
-    info!("HID connected: vendor={:#06x} product={:#06x}", vendor_id, product_id);
-    Ok(())
+    if let Some(h) = hid.thread.lock().unwrap().take() {
+        let _ = h.join();
+    }
+    hid.alive.lock().unwrap().take();
 }
 
 #[tauri::command]
-pub fn hid_disconnect(state: State<'_, AppState>) -> Result<(), String> {
-    if let Some(tx) = state.hid.cmd_tx.lock().unwrap().take() {
-        let _ = tx.send(HidCmd::Stop);
-    }
-    if let Some(s) = state.hid.stop.lock().unwrap().take() {
-        s.store(true, Ordering::Relaxed);
-    }
-    state.hid.alive.lock().unwrap().take();
-    state.hid.reports.lock().unwrap().clear();
-    info!("HID disconnected");
-    Ok(())
+pub async fn hid_connect(
+    vendor_id: u16,
+    product_id: u16,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let hid = Arc::clone(&state.hid);
+    // Arc-Clone statt State-Borrow: spawn_blocking braucht 'static.
+    // HidApi::new() + open() blockieren — nicht auf dem Async-Runner laufen lassen.
+    tokio::task::spawn_blocking(move || {
+        // 1. Open FIRST — a failed open must not destroy a working connection.
+        let api = HidApi::new().map_err(|e| e.to_string())?;
+        let device = api.open(vendor_id, product_id).map_err(|e| e.to_string())?;
+        // 2. Only now tear down the previous reader thread (and join it).
+        teardown_hid(&hid);
+        let (cmd_tx, cmd_rx) = mpsc::sync_channel::<HidCmd>(32);
+        let stop       = Arc::new(AtomicBool::new(false));
+        let stop_clone = Arc::clone(&stop);
+        let alive      = Arc::new(AtomicBool::new(true));
+        let alive_clone = Arc::clone(&alive);
+        hid.reports.lock().unwrap().clear();
+        hid.dropped_reports.store(0, Ordering::Relaxed);
+        *hid.last_write_error.lock().unwrap() = None;
+        hid.write_count.store(0, Ordering::Relaxed);
+        hid.write_errors.store(0, Ordering::Relaxed);
+        *hid.cmd_tx.lock().unwrap() = Some(cmd_tx);
+        *hid.stop.lock().unwrap()   = Some(stop);
+        *hid.alive.lock().unwrap()  = Some(alive);
+        let shared = Arc::clone(&hid);
+        let handle = std::thread::spawn(move || {
+            run_hid_thread(device, cmd_rx, shared, stop_clone, alive_clone)
+        });
+        *hid.thread.lock().unwrap() = Some(handle);
+        info!("HID connected: vendor={:#06x} product={:#06x}", vendor_id, product_id);
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("HID-Aufgabe fehlgeschlagen: {e}"))?
+}
+
+#[tauri::command]
+pub async fn hid_disconnect(state: State<'_, AppState>) -> Result<(), String> {
+    let hid = Arc::clone(&state.hid);
+    // Arc-Clone statt State-Borrow: spawn_blocking braucht 'static.
+    tokio::task::spawn_blocking(move || {
+        teardown_hid(&hid);
+        hid.reports.lock().unwrap().clear();
+        info!("HID disconnected");
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("HID-Aufgabe fehlgeschlagen: {e}"))?
 }
 
 #[tauri::command]
@@ -473,5 +529,19 @@ mod tests {
             assert!(alive.load(Ordering::Relaxed)); // still alive while held
         }
         assert!(!alive.load(Ordering::Relaxed)); // false after drop
+    }
+
+    #[test]
+    fn reader_should_exit_after_threshold() {
+        assert!(!reader_should_exit(0));
+        assert!(!reader_should_exit(2));
+        assert!(reader_should_exit(3)); // MAX_CONSECUTIVE_READ_ERRORS
+    }
+
+    #[test]
+    fn read_error_backoff_grows_and_caps() {
+        assert_eq!(read_error_backoff_ms(1), 10);
+        assert_eq!(read_error_backoff_ms(2), 20);
+        assert_eq!(read_error_backoff_ms(10), 50); // cap
     }
 }
