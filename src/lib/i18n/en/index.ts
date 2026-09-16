@@ -485,6 +485,7 @@ const en: Translation = {
     quickTest: 'Quick test',
     save: 'Save',
     saveTitle: 'Permanently save changes to the controller',
+    btFeatureGate: 'Calibration, NVS and save are only available over USB.',
     discard: 'Discard',
     discardTitleAvail: 'Discard calibration changes since connect/save',
     discardTitleNone: 'No changes to discard yet',

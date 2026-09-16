@@ -496,6 +496,7 @@ const de: BaseTranslation = {
     quickTest: 'Schnelltest',
     save: 'Speichern',
     saveTitle: 'Änderungen dauerhaft im Controller speichern',
+    btFeatureGate: 'Kalibrieren, NVS und Speichern sind nur über USB verfügbar.',
     discard: 'Verwerfen',
     discardTitleAvail: 'Kalibrierungsänderungen seit Verbinden/Speichern verwerfen',
     discardTitleNone: 'Noch keine Änderungen zum Verwerfen',

@@ -387,33 +387,33 @@ describe('createControllerForDevice', () => {
   });
 });
 
-describe('_getInfo feature-report parsing', () => {
-  /** Build a realistic 64-byte DS5 feature-report 0x20 buffer.
-   *  Byte 0 = report id (0x20), matching the WebHID convention the parser
-   *  expects. The Rust backend now returns the full buffer (rbuf[..n]) so
-   *  byte 0 IS the report id — this test guards against regressions. */
-  function makeInfoReport(): ArrayBuffer {
-    const buf = new ArrayBuffer(64);
-    const v = new DataView(buf);
-    v.setUint8(0, 0x20); // report id
-    // buildDate "2024-05-01" (11 bytes at offset 1)
-    const bd = new TextEncoder().encode('2024-05-01 ');
-    new Uint8Array(buf, 1, 11).set(bd.subarray(0, 11));
-    // buildTime "10:30:00" (8 bytes at offset 12)
-    const bt = new TextEncoder().encode('10:30:00');
-    new Uint8Array(buf, 12, 8).set(bt);
-    v.setUint16(20, 2, true); // fwType
-    v.setUint16(22, 1, true); // swSeries
-    v.setUint32(24, 0xabcd, true); // hwInfo
-    v.setUint32(28, 0x15010400, true); // fwVersion → "21.01.04.00"
-    v.setUint16(44, 0x200, true); // updateVersion
-    v.setUint8(46, 0x42); // updateImageInfo
-    v.setUint32(48, 0x01020304, true); // sblFwVersion
-    v.setUint32(52, 0x05060708, true); // dspFwVersion
-    v.setUint32(56, 0x090a0b0c, true); // spiderDspFwVersion
-    return buf;
-  }
+/** Build a realistic 64-byte DS5 feature-report 0x20 buffer.
+ *  Byte 0 = report id (0x20), matching the WebHID convention the parser
+ *  expects. The Rust backend now returns the full buffer (rbuf[..n]) so
+ *  byte 0 IS the report id — this test guards against regressions. */
+function makeInfoReport(): ArrayBuffer {
+  const buf = new ArrayBuffer(64);
+  const v = new DataView(buf);
+  v.setUint8(0, 0x20); // report id
+  // buildDate "2024-05-01" (11 bytes at offset 1)
+  const bd = new TextEncoder().encode('2024-05-01 ');
+  new Uint8Array(buf, 1, 11).set(bd.subarray(0, 11));
+  // buildTime "10:30:00" (8 bytes at offset 12)
+  const bt = new TextEncoder().encode('10:30:00');
+  new Uint8Array(buf, 12, 8).set(bt);
+  v.setUint16(20, 2, true); // fwType
+  v.setUint16(22, 1, true); // swSeries
+  v.setUint32(24, 0xabcd, true); // hwInfo
+  v.setUint32(28, 0x15010400, true); // fwVersion → "21.01.04.00"
+  v.setUint16(44, 0x200, true); // updateVersion
+  v.setUint8(46, 0x42); // updateImageInfo
+  v.setUint32(48, 0x01020304, true); // sblFwVersion
+  v.setUint32(52, 0x05060708, true); // dspFwVersion
+  v.setUint32(56, 0x090a0b0c, true); // spiderDspFwVersion
+  return buf;
+}
 
+describe('_getInfo feature-report parsing', () => {
   it('parses FW Version and build date from a 0x20 report with report-id at byte 0', async () => {
     const infoBuf = makeInfoReport();
     const dev = makeFakeDevice();
@@ -436,6 +436,58 @@ describe('_getInfo feature-report parsing', () => {
     const ctrl = new DS5Controller(dev as unknown as HIDDeviceLike);
     const info = await ctrl._getInfo(false);
     expect(info.ok).toBe(false);
+  });
+});
+
+describe('BT feature-flow gating (#120)', () => {
+  it('throws a German BT-gating error on calibration over BT (#120)', async () => {
+    const device = makeFakeDevice();
+    const ctrl = new DS5Controller(device);
+    ctrl.setTransport('bt');
+    await expect(ctrl.calibrateSticksBegin()).rejects.toThrow(/Bluetooth/);
+  });
+
+  it('gates NVS, save and finetune flows over BT with German errors (#120)', async () => {
+    const device = makeFakeDevice();
+    const ctrl = new DS5Controller(device);
+    ctrl.setTransport('bt');
+    await expect(ctrl.queryNvStatus()).rejects.toThrow(/nur über USB/);
+    await expect(ctrl.nvsUnlock()).rejects.toThrow(/NVS-Zugriff/);
+    await expect(ctrl.nvsLock()).rejects.toThrow(/NVS-Zugriff/);
+    await expect(ctrl.calibrateRangeBegin()).rejects.toThrow(/Kalibrierung/);
+    await expect(ctrl.calibrateSticksSample()).rejects.toThrow(/Kalibrierung/);
+    await expect(ctrl.calibrateSticksEnd()).rejects.toThrow(/Kalibrierung/);
+    await expect(ctrl.calibrateRangeEnd()).rejects.toThrow(/Kalibrierung/);
+    await expect(ctrl.flash()).rejects.toThrow(/Speichern/);
+    await expect(ctrl.getInMemoryModuleData()).rejects.toThrow(/Kalibrierung/);
+    await expect(ctrl.writeFinetuneData([1, 2, 3])).rejects.toThrow(/Kalibrierung/);
+    // No feature report may have been sent by any gated flow.
+    expect(device.sent).toHaveLength(0);
+  });
+
+  it('keeps the same flows working over USB (#120)', async () => {
+    const device = makeFakeDevice();
+    const ctrl = new DS5Controller(device);
+    ctrl.setTransport('usb');
+    // The stub device answers feature reports with zeros, so the calib begin
+    // fails with ok:false — the point is that it does NOT reject with the gate.
+    const calib = await ctrl.calibrateSticksBegin();
+    expect(calib.ok).toBe(false);
+    await expect(ctrl.queryNvStatus()).resolves.toBeDefined();
+    await expect(ctrl.getInMemoryModuleData()).resolves.toBeNull();
+    await expect(ctrl.writeFinetuneData([1, 2])).resolves.toBeUndefined();
+    await expect(ctrl.flash()).resolves.toEqual({ success: true, message: expect.any(String) });
+  });
+
+  it('_getInfo still succeeds over BT (NVS query falls back to an error status)', async () => {
+    const infoBuf = makeInfoReport();
+    const dev = makeFakeDevice();
+    dev.receiveFeatureReport = async (_reportId: number) => new DataView(infoBuf);
+    const ctrl = new DS5Controller(dev as unknown as HIDDeviceLike);
+    ctrl.setTransport('bt');
+    const info = await ctrl._getInfo(false);
+    expect(info.ok).toBe(true);
+    expect(info.nv?.status).toBe('error');
   });
 });
 

@@ -258,6 +258,21 @@ export class DS5Controller extends BaseController {
     this.currentOutputState = defaultOutputState();
   }
 
+  /**
+   * Feature/flash/calibration flows need a USB connection: BT carries a
+   * different feature-report framing the Linux kernel does not reliably route,
+   * so these flows are gated here (and disabled in the UI, #120). The guard
+   * must be called BEFORE the method's own try/catch so it rejects instead of
+   * being swallowed into a `{ ok: false }` CalibResult.
+   */
+  private requireUsb(flow: string): void {
+    if (this.transport === 'bt') {
+      throw new Error(
+        `${flow} ist nur über USB verfügbar (nicht über Bluetooth) — Controller bitte per USB verbinden.`
+      );
+    }
+  }
+
   getInputConfig(): InputConfig {
     return DS5_INPUT_CONFIG;
   }
@@ -416,7 +431,14 @@ export class DS5Controller extends BaseController {
       let disableBits = 0;
       if (buildDate.search(/ 2020| 2021/) != -1) disableBits |= 2;
 
-      const nv = await this.queryNvStatus();
+      // BT (#120): the NVS query (0x80/0x81) is gated over Bluetooth — see
+      // requireUsb. Fall back to an error status here so the info read itself
+      // still succeeds over BT (active tests stay BT-capable); NVS state is
+      // only meaningful over USB anyway.
+      const nv =
+        this.transport === 'bt'
+          ? ({ device: 'ds5', status: 'error', locked: null, code: 2, raw: 0 } as NvStatus)
+          : await this.queryNvStatus();
       const bdAddr = await this.getBdAddr();
       infoItems.push({ key: 'Bluetooth Address', value: bdAddr, cat: 'hw', isExtra: true });
 
@@ -430,6 +452,7 @@ export class DS5Controller extends BaseController {
   async flash(
     _progressCallback: ((p: number) => void) | null = null
   ): Promise<{ success: boolean; message: string }> {
+    this.requireUsb('Speichern');
     try {
       await this.nvsUnlock();
       const lockRes = await this.nvsLock();
@@ -449,6 +472,7 @@ export class DS5Controller extends BaseController {
   }
 
   async nvsLock(): Promise<CalibResult> {
+    this.requireUsb('NVS-Zugriff');
     try {
       await this.sendFeatureReport(0x80, [3, 1]);
       await this.receiveFeatureReport(0x81);
@@ -459,6 +483,7 @@ export class DS5Controller extends BaseController {
   }
 
   async nvsUnlock(): Promise<void> {
+    this.requireUsb('NVS-Zugriff');
     try {
       await this.sendFeatureReport(0x80, [3, 2, 101, 50, 64, 12]);
       await this.receiveFeatureReport(0x81);
@@ -485,6 +510,7 @@ export class DS5Controller extends BaseController {
   }
 
   async calibrateSticksBegin(): Promise<CalibResult> {
+    this.requireUsb('Kalibrierung');
     try {
       await this.sendFeatureReport(0x82, [1, 1, 1]);
       const data = await this.receiveFeatureReport(0x83);
@@ -500,6 +526,7 @@ export class DS5Controller extends BaseController {
   }
 
   async calibrateSticksSample(): Promise<CalibResult> {
+    this.requireUsb('Kalibrierung');
     try {
       await this.sendFeatureReport(0x82, [3, 1, 1]);
       const data = await this.receiveFeatureReport(0x83);
@@ -515,6 +542,7 @@ export class DS5Controller extends BaseController {
   }
 
   async calibrateSticksEnd(): Promise<CalibResult> {
+    this.requireUsb('Kalibrierung');
     try {
       await this.sendFeatureReport(0x82, [2, 1, 1]);
       const data = await this.receiveFeatureReport(0x83);
@@ -530,6 +558,7 @@ export class DS5Controller extends BaseController {
   }
 
   async calibrateRangeBegin(): Promise<CalibResult> {
+    this.requireUsb('Kalibrierung');
     try {
       await this.sendFeatureReport(0x82, [1, 1, 2]);
       const data = await this.receiveFeatureReport(0x83);
@@ -545,6 +574,7 @@ export class DS5Controller extends BaseController {
   }
 
   async calibrateRangeEnd(): Promise<CalibResult> {
+    this.requireUsb('Kalibrierung');
     try {
       await this.sendFeatureReport(0x82, [2, 1, 2]);
       const data = await this.receiveFeatureReport(0x83);
@@ -560,6 +590,7 @@ export class DS5Controller extends BaseController {
   }
 
   async queryNvStatus(): Promise<NvStatus> {
+    this.requireUsb('NVS-Zugriff');
     try {
       await this.sendFeatureReport(0x80, [3, 3]);
       const data = await this.receiveFeatureReport(0x81);
@@ -605,6 +636,7 @@ export class DS5Controller extends BaseController {
   }
 
   async getInMemoryModuleData(): Promise<number[] | null> {
+    this.requireUsb('Kalibrierung');
     await this.sendFeatureReport(0x80, [12, 2]);
     await sleep(100);
     const data = await this.receiveFeatureReport(0x81);
@@ -615,6 +647,7 @@ export class DS5Controller extends BaseController {
   }
 
   async writeFinetuneData(data: number[]): Promise<void> {
+    this.requireUsb('Kalibrierung');
     const pkg = data.reduce((acc: number[], val) => acc.concat([val & 0xff, val >> 8]), [12, 1]);
     await this.sendFeatureReport(0x80, pkg);
   }

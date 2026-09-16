@@ -420,18 +420,29 @@
       </div>
     </div>
 
+    <!-- BT feature-flow gate (#120): calibration/NVS/save need USB -->
+    {#if transport === 'bt'}
+      <div class="rounded-lg border border-amber-700/40 bg-amber-900/30 px-3 py-2 text-xs text-amber-200">
+        {$LL.controller.btFeatureGate()}
+      </div>
+    {/if}
+
     <!-- Quick actions — calibration, circularity test, quick test (most important, at top) -->
     <div class="flex flex-wrap gap-2">
       <button
-        class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
+        class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
         onclick={() => (calibOpen = true)}
+        disabled={transport === 'bt'}
+        title={transport === 'bt' ? $LL.controller.btFeatureGate() : $LL.controller.calibration()}
       >
         <Wrench class="h-4 w-4" />
         {$LL.controller.calibration()}
       </button>
       <button
-        class="flex items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 text-sm text-white hover:bg-teal-700"
+        class="flex items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 text-sm text-white hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed"
         onclick={() => (circOpen = true)}
+        disabled={transport === 'bt'}
+        title={transport === 'bt' ? $LL.controller.btFeatureGate() : $LL.controller.circularity()}
       >
         <Crosshair class="h-4 w-4" />
         {$LL.controller.circularity()}
@@ -444,9 +455,12 @@
         {$LL.controller.quickTest()}
       </button>
       <button
-        class="flex items-center gap-1.5 rounded-lg bg-amber-600/20 px-4 py-2 text-sm text-amber-400 hover:bg-amber-600/30"
+        class="flex items-center gap-1.5 rounded-lg bg-amber-600/20 px-4 py-2 text-sm text-amber-400 hover:bg-amber-600/30 disabled:opacity-40 disabled:cursor-not-allowed"
         onclick={flashController}
-        title={$LL.controller.saveTitle()}
+        disabled={transport === 'bt'}
+        title={transport === 'bt'
+          ? $LL.controller.btFeatureGate()
+          : $LL.controller.saveTitle()}
       >
         <Lightbulb class="h-4 w-4" />
         {$LL.controller.save()}
@@ -454,10 +468,14 @@
       <button
         class="flex items-center gap-1.5 rounded-lg bg-gray-700 px-4 py-2 text-sm text-gray-300 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed"
         onclick={undoCalibration}
-        disabled={!calibSnapshot}
-        title={calibSnapshot
-          ? $LL.controller.discardTitleAvail()
-          : $LL.controller.discardTitleNone()}
+        disabled={!calibSnapshot || transport === 'bt'}
+        title={
+          transport === 'bt'
+            ? $LL.controller.btFeatureGate()
+            : calibSnapshot
+              ? $LL.controller.discardTitleAvail()
+              : $LL.controller.discardTitleNone()
+        }
       >
         <Undo2 class="h-4 w-4" />
         {$LL.controller.discard()}

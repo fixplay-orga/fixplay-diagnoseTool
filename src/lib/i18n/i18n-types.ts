@@ -1751,6 +1751,10 @@ type RootTranslation = {
 		 */
 		saveTitle: string
 		/**
+		 * K​a​l​i​b​r​i​e​r​e​n​,​ ​N​V​S​ ​u​n​d​ ​S​p​e​i​c​h​e​r​n​ ​s​i​n​d​ ​n​u​r​ ​ü​b​e​r​ ​U​S​B​ ​v​e​r​f​ü​g​b​a​r​.
+		 */
+		btFeatureGate: string
+		/**
 		 * V​e​r​w​e​r​f​e​n
 		 */
 		discard: string
@@ -5054,6 +5058,10 @@ export type TranslationFunctions = {
 		 * Änderungen dauerhaft im Controller speichern
 		 */
 		saveTitle: () => LocalizedString
+		/**
+		 * Kalibrieren, NVS und Speichern sind nur über USB verfügbar.
+		 */
+		btFeatureGate: () => LocalizedString
 		/**
 		 * Verwerfen
 		 */
