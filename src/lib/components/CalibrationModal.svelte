@@ -45,6 +45,18 @@
   let success = $state(false);
   let statusText = $state('');
 
+  // Run token (#121): incremented on every start() and close(). Async
+  // continuations compare their captured token against this counter and bail
+  // out when stale, so an overtaken run can never write into a newer run's
+  // (or a closed modal's) state.
+  let activeRun = 0;
+
+  // While a range flow is in its sampling step, the mode tabs stay locked
+  // (they were locked via `busy` before #121; the busy release for the Fertig
+  // button would otherwise allow switching the flow away mid-sampling, which
+  // would orphan the controller-side range mode).
+  let rangeSampling = $derived(mode === 'range' && step === 2 && !success);
+
   // Before/after comparison (#48): snapshot the in-memory finetune module data
   // (12 little-endian u16 values) before calibration starts, then read it again
   // after a successful calibration to show the per-value delta.
@@ -150,7 +162,7 @@
     }
   }
 
-  async function runRangeCalibration() {
+  async function runRangeCalibration(run: number) {
     if (!manager) return;
     busy = true;
     error = null;
@@ -160,6 +172,7 @@
       statusText = get(LL).calibration.startRange();
       step = 1;
       await manager.calibrateRangeBegin();
+      if (run !== activeRun) return; // stale run — a newer run/close owns the UI
       step = 2;
       statusText = get(LL).calibration.moveSticks();
       // Sample stick motion live while the user sweeps. The subscription stays
@@ -170,16 +183,22 @@
         rangeCoverage = Math.min(coverage(rangeLeft), coverage(rangeRight));
       });
     } catch (e) {
+      if (run !== activeRun) return; // stale run — a newer run/close owns the UI
       error = e instanceof Error ? e.message : String(e);
       statusText = get(LL).calibration.errorPrefix({ error });
       pushControllerLog(get(LL).calibration.rangeBeginFailedLog({ error }), 'error');
       resetRangeSampling();
-      busy = false;
+    } finally {
+      // #121 bug 1: the success path used to leave busy=true forever (the
+      // Fertig button gate is `step === 2 && !busy`). Only the CURRENT run may
+      // release busy — a stale run must not clobber the newer run's busy.
+      if (run === activeRun) busy = false;
     }
   }
 
   async function finishRangeCalibration() {
     if (!manager) return;
+    const run = activeRun; // started by start() — the token was taken there
     busy = true;
     try {
       // Stop sampling before sending the end feature report.
@@ -190,6 +209,7 @@
       statusText = get(LL).calibration.saveRange();
       step = 3;
       await manager.calibrateRangeEnd();
+      if (run !== activeRun) return; // stale — close() invalidated this run
       step = 4;
       success = true;
       // Publish the sampled circularity polygons so the stick visualizers in
@@ -207,33 +227,55 @@
       }
       onDone?.(true, get(LL).calibration.rangeDoneShort());
     } catch (e) {
+      if (run !== activeRun) return; // stale — don't report a superseded run
       error = e instanceof Error ? e.message : String(e);
       statusText = get(LL).calibration.errorPrefix({ error });
       pushControllerLog(get(LL).calibration.rangeEndFailedLog({ error }), 'error');
       onDone?.(false, error);
     } finally {
-      busy = false;
+      if (run === activeRun) busy = false;
     }
   }
 
   async function start() {
+    const run = ++activeRun;
     reset();
     // Snapshot the finetune data before calibration so we can show the delta.
     if (manager) {
       beforeData = await manager.getInMemoryModuleData().catch(() => null);
     }
+    if (run !== activeRun) return; // superseded by a newer start/close
     if (mode === 'center') {
       totalSteps = 6;
       await runCenterCalibration();
     } else {
       totalSteps = 4;
-      await runRangeCalibration();
+      await runRangeCalibration(run);
     }
   }
 
-  function close() {
+  let closing = false;
+  async function close() {
+    if (closing) return; // double close (Escape + button) must not send a 2nd end
+    closing = true;
+    // Invalidate any in-flight run: its continuations must not write into the
+    // (now closed) modal state.
+    ++activeRun;
+    // #121 bug 2: aborting a range flow must tell the controller, otherwise it
+    // stays in range mode hardware-side. step < 3 means calibrateRangeEnd has
+    // not been sent yet (step 3 = end in flight, step 4 = done). Best effort:
+    // a failing feature report must not block closing the modal.
+    if (manager && mode === 'range' && step >= 1 && step < 3 && !success) {
+      busy = false;
+      try {
+        await manager.calibrateRangeEnd();
+      } catch {
+        /* Best effort — close regardless. */
+      }
+    }
     open = false;
     reset();
+    closing = false;
   }
 
   // If the panel unmounts while range sampling is mid-flight (e.g. route
@@ -286,7 +328,7 @@
             ? 'bg-blue-600 text-white'
             : 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200'}"
           onclick={() => (mode = 'center')}
-          disabled={busy}
+          disabled={busy || rangeSampling}
         >
           {$LL.calibration.tabCenter()}
         </button>
@@ -295,7 +337,7 @@
             ? 'bg-blue-600 text-white'
             : 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200'}"
           onclick={() => (mode = 'range')}
-          disabled={busy}
+          disabled={busy || rangeSampling}
         >
           {$LL.calibration.tabRange()}
         </button>
