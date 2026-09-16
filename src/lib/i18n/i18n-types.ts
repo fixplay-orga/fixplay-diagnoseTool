@@ -3316,6 +3316,38 @@ type RootTranslation = {
 		 */
 		productPh: string
 		/**
+		 * T​r​a​n​s​p​o​r​t​ ​(​B​T​ ​l​i​e​f​e​r​t​ ​0​x​3​1​-​F​r​a​m​e​s​ ​m​i​t​ ​C​R​C​)
+		 */
+		transportLabel: string
+		/**
+		 * U​S​B
+		 */
+		transportUsb: string
+		/**
+		 * B​l​u​e​t​o​o​t​h
+		 */
+		transportBt: string
+		/**
+		 * H​I​D​-​F​e​h​l​e​r​-​I​n​j​e​k​t​i​o​n
+		 */
+		hidErrorsLabel: string
+		/**
+		 * F​e​h​l​e​r​:​ ​H​I​D​-​W​r​i​t​e
+		 */
+		errorHidWrite: string
+		/**
+		 * F​e​h​l​e​r​:​ ​H​I​D​-​C​o​n​n​e​c​t
+		 */
+		errorHidConnect: string
+		/**
+		 * F​e​h​l​e​r​:​ ​H​I​D​-​R​e​a​d
+		 */
+		errorHidRead: string
+		/**
+		 * A​k​t​i​v​e​ ​F​e​h​l​e​r​ ​l​a​s​s​e​n​ ​d​i​e​ ​H​I​D​-​B​e​f​e​h​l​e​ ​(​W​r​i​t​e​/​C​o​n​n​e​c​t​/​P​o​l​l​)​ ​m​i​t​ ​e​i​n​e​m​ ​T​a​u​r​i​-​S​t​r​i​n​g​-​F​e​h​l​e​r​ ​s​c​h​e​i​t​e​r​n​ ​—​ ​R​e​s​i​l​i​e​n​c​e​-​T​e​s​t​s​ ​o​h​n​e​ ​H​a​r​d​w​a​r​e​ ​(​#​1​2​6​)​.
+		 */
+		hidErrorHint: string
+		/**
 		 * S​i​m​u​l​i​e​r​t​e​r​ ​I​n​p​u​t
 		 */
 		sectionInput: string
@@ -6569,6 +6601,38 @@ export type TranslationFunctions = {
 		 * Produkt
 		 */
 		productPh: () => LocalizedString
+		/**
+		 * Transport (BT liefert 0x31-Frames mit CRC)
+		 */
+		transportLabel: () => LocalizedString
+		/**
+		 * USB
+		 */
+		transportUsb: () => LocalizedString
+		/**
+		 * Bluetooth
+		 */
+		transportBt: () => LocalizedString
+		/**
+		 * HID-Fehler-Injektion
+		 */
+		hidErrorsLabel: () => LocalizedString
+		/**
+		 * Fehler: HID-Write
+		 */
+		errorHidWrite: () => LocalizedString
+		/**
+		 * Fehler: HID-Connect
+		 */
+		errorHidConnect: () => LocalizedString
+		/**
+		 * Fehler: HID-Read
+		 */
+		errorHidRead: () => LocalizedString
+		/**
+		 * Aktive Fehler lassen die HID-Befehle (Write/Connect/Poll) mit einem Tauri-String-Fehler scheitern — Resilience-Tests ohne Hardware (#126).
+		 */
+		hidErrorHint: () => LocalizedString
 		/**
 		 * Simulierter Input
 		 */

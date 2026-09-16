@@ -4,13 +4,14 @@
   // store, so every edit changes what the next backend `invoke()` returns in
   // the hosted web preview. State persists to localStorage (see state.ts).
 
-  import { mockState, resetMockState, DEFAULT_MOCK_STATE, ERROR_INJECTABLE } from '$lib/mock/state';
+  import { mockState, resetMockState, DEFAULT_MOCK_STATE, ERROR_INJECTABLE, HID_ERROR_INJECTABLE } from '$lib/mock/state';
   import type {
     MockFlashState,
     MockUartState,
     MockHidState,
     MockI2cState,
     MockControllerInput,
+    HidErrorInjectable,
   } from '$lib/mock/state';
   import type {
     DeviceInfo,
@@ -527,6 +528,17 @@
   }
   function clearAllErrors(): void {
     mockState.update((s) => ({ ...s, errors: {} }));
+  }
+
+  // --- HID transport + transport-error injection (#123) ---
+  function toggleHidInjectError(err: HidErrorInjectable): void {
+    mockState.update((s) => {
+      const armed = s.hid.injectErrors.includes(err);
+      const injectErrors = armed
+        ? s.hid.injectErrors.filter((e) => e !== err)
+        : [...s.hid.injectErrors, err];
+      return { ...s, hid: { ...s.hid, injectErrors } };
+    });
   }
 </script>
 
@@ -1105,6 +1117,46 @@
               class="accent-amber-500 w-4 h-4"
             /><span class="text-xs text-gray-300">{$LL.mock.connectedHid()}</span></label
           >
+
+          <!-- Transport simulation (#123): USB = 0x01 frames, BT = 77-byte 0x31
+               frames with CRC32 + cyclic seq. hid_connect also re-derives this
+               from the product id. -->
+          <div class="flex flex-col gap-1.5">
+            <span class={lblCls}>{$LL.mock.transportLabel()}</span>
+            <div class="flex flex-wrap gap-1.5">
+              {#each [{ id: 'usb', label: $LL.mock.transportUsb() }, { id: 'bt', label: $LL.mock.transportBt() }] as const as t (t.id)}
+                <button
+                  onclick={() => setHid('simulateTransport', t.id)}
+                  class="px-2 py-1 text-xs rounded border {$mockState.hid.simulateTransport === t.id
+                    ? 'bg-teal-500/30 border-teal-400 text-teal-200'
+                    : 'bg-gray-800/60 border-gray-700 text-gray-400 hover:bg-gray-700'}"
+                  >{t.label}</button
+                >
+              {/each}
+            </div>
+          </div>
+
+          <!-- HID transport-error injection (#123): while armed, the mock's
+               hid_write/connect/read paths reject like failed Tauri commands. -->
+          <div class="flex flex-col gap-1.5">
+            <span class={lblCls}>{$LL.mock.hidErrorsLabel()}</span>
+            <div class="flex flex-wrap gap-1.5">
+              {#each HID_ERROR_INJECTABLE as err (err)}
+                <button
+                  onclick={() => toggleHidInjectError(err)}
+                  class="px-2 py-1 text-xs rounded border {$mockState.hid.injectErrors.includes(err)
+                    ? 'bg-red-500/30 border-red-400 text-red-200'
+                    : 'bg-gray-800/60 border-gray-700 text-gray-400 hover:bg-gray-700'}"
+                  >{err === 'hid-write'
+                    ? $LL.mock.errorHidWrite()
+                    : err === 'hid-connect'
+                      ? $LL.mock.errorHidConnect()
+                      : $LL.mock.errorHidRead()}</button
+                >
+              {/each}
+            </div>
+            <p class="text-[11px] text-gray-600">{$LL.mock.hidErrorHint()}</p>
+          </div>
 
           <div class="flex flex-col gap-2">
             <div class="flex items-center justify-between">

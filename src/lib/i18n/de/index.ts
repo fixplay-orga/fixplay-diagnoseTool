@@ -924,6 +924,15 @@ const de: BaseTranslation = {
     pidLabel: 'PID (hex)',
     manufacturerPh: 'Hersteller',
     productPh: 'Produkt',
+    transportLabel: 'Transport (BT liefert 0x31-Frames mit CRC)',
+    transportUsb: 'USB',
+    transportBt: 'Bluetooth',
+    hidErrorsLabel: 'HID-Fehler-Injektion',
+    errorHidWrite: 'Fehler: HID-Write',
+    errorHidConnect: 'Fehler: HID-Connect',
+    errorHidRead: 'Fehler: HID-Read',
+    hidErrorHint:
+      'Aktive Fehler lassen die HID-Befehle (Write/Connect/Poll) mit einem Tauri-String-Fehler scheitern — Resilience-Tests ohne Hardware (#126).',
     sectionInput: 'Simulierter Input',
     inputHint:
       'Steuerung für die Live-Visualisierung. Tasten klicken zum Umschalten, Sticks/Trigger per Slider.',

@@ -78,6 +78,22 @@ export interface MockControllerInput {
 export interface MockHidState {
   devices: HidDeviceInfo[];
   connected: boolean;
+  /**
+   * Transport the mock simulates for generated input frames (#123). `'usb'`
+   * delivers report id 1 with a 64-byte body; `'bt'` delivers report id 0x31
+   * with a 77-byte CRC-framed payload (seq in the top 6 bits of byte 0).
+   * `hid_connect` re-derives this from the product id (BT pid 0x0df2), the
+   * MockPanel can override it.
+   */
+  simulateTransport: 'usb' | 'bt';
+  /**
+   * Armed HID transport-error injections (#123, #126 hardware-validation
+   * rehearsal). Members of `HID_ERROR_INJECTABLE`; while an entry is present
+   * the corresponding hid operation (write/connect/read) rejects with a
+   * Tauri-style string error. Array (not Set) so the state stays
+   * JSON-serializable for the localStorage persistence.
+   */
+  injectErrors: HidErrorInjectable[];
   /** Simulated controller input — the mock hid_poll builds a DS5 input report
    * from this so the visualizer + testers can be exercised in a browser with no
    * hardware. Driven by the MockPanel "Controller" tab. */
@@ -122,6 +138,47 @@ export const ERROR_INJECTABLE: string[] = [
   'uart_update_error_db',
   'i2c_update_xbox_db',
 ];
+
+/**
+ * HID transport operations the mock layer can inject failures for (#123, #126
+ * hardware-validation rehearsal). While armed, the corresponding mock handler
+ * rejects with a Tauri-style string error:
+ *
+ *   - `hid-write`  → `hid_send_output_report`
+ *   - `hid-connect`→ `hid_connect`
+ *   - `hid-read`   → `hid_poll`
+ *
+ * (Name deliberately differs from the brief's `ERROR_INJECTABLE` sketch — that
+ * name is already taken by the command-level injection list above, #72, and
+ * existing exports are never renamed.)
+ */
+export const HID_ERROR_INJECTABLE = ['hid-write', 'hid-connect', 'hid-read'] as const;
+export type HidErrorInjectable = (typeof HID_ERROR_INJECTABLE)[number];
+
+/**
+ * Runtime protocol-mirroring state (#123) — written by the mock hid handlers,
+ * read by tests to assert what the protocol layer actually sent. Kept out of
+ * the persisted `mockState` store on purpose: output reports and polls fire at
+ * high frequency, and a store write per frame would spam the localStorage
+ * persistence subscription.
+ */
+export const mockHidRuntime: {
+  /** Last output-report frame exactly as `hid_send_output_report` received it
+   * (report-id byte at index 0 — TauriHIDDevice.sendReport prepends it). */
+  lastOutputReport: number[] | null;
+  /** Lightbar RGB mirrored from the last accepted output report: USB frame
+   * offsets 45-47 (common 44-46 after the id byte) or BT offsets 47-49. */
+  mirroredLightbar: [number, number, number];
+  /** Cyclic Bluetooth input sequence counter (mod 64, top 6 bits of byte 0). */
+  btInputSeq: number;
+} = { lastOutputReport: null, mirroredLightbar: [0, 0, 0], btInputSeq: 0 };
+
+/**
+ * Canned DS5 feature replies (#123): report id → staged reply buffer. The
+ * mock `hid_send_feature_report` fills this from the real DS5 reply rules, and
+ * `hid_receive_feature_report` drains it. Cleared by `resetMockState()`.
+ */
+export const mockFeatureReplies = new Map<number, number[]>();
 
 const STORAGE_KEY = 'fixplay-mock-state';
 
@@ -229,6 +286,8 @@ export const DEFAULT_MOCK_STATE: MockState = {
   hid: {
     devices: defaultHidDevices(),
     connected: true,
+    simulateTransport: 'usb',
+    injectErrors: [],
     input: {
       lx: 0,
       ly: 0,
@@ -328,6 +387,11 @@ export function resetMockState(): void {
     }
   }
   mockState.set(clone(DEFAULT_MOCK_STATE));
+  // Runtime protocol state is not part of the persisted store — clear it here.
+  mockHidRuntime.lastOutputReport = null;
+  mockHidRuntime.mirroredLightbar = [0, 0, 0];
+  mockHidRuntime.btInputSeq = 0;
+  mockFeatureReplies.clear();
 }
 
 /** Convenience for the mock core handlers: read the current state once. */

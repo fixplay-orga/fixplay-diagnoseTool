@@ -910,6 +910,15 @@ const en: Translation = {
     pidLabel: 'PID (hex)',
     manufacturerPh: 'Manufacturer',
     productPh: 'Product',
+    transportLabel: 'Transport (BT delivers 0x31 frames with CRC)',
+    transportUsb: 'USB',
+    transportBt: 'Bluetooth',
+    hidErrorsLabel: 'HID error injection',
+    errorHidWrite: 'Error: HID write',
+    errorHidConnect: 'Error: HID connect',
+    errorHidRead: 'Error: HID read',
+    hidErrorHint:
+      'Active errors make the HID commands (write/connect/poll) fail with a Tauri-style string error — resilience rehearsal without hardware (#126).',
     sectionInput: 'Simulated input',
     inputHint:
       'Controls the live visualizer. Click buttons to toggle, sticks/triggers via sliders.',

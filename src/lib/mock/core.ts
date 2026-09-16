@@ -6,8 +6,9 @@
 // Every fake value is read from the reactive `mockState` store (./state.ts) so
 // the MockPanel can change it at runtime — edits apply to the next invoke().
 import { emitLocal, delay, settingsStore } from './_shared';
-import { getMockState } from './state';
-import type { MockControllerInput } from './state';
+import { mockState, getMockState, mockHidRuntime, mockFeatureReplies } from './state';
+import type { MockControllerInput, HidErrorInjectable } from './state';
+import { fillBtInputCrc, crc32 } from '../controllers/crc32';
 import type {
   DeviceInfo,
   FlashReadResult,
@@ -107,6 +108,147 @@ function buildDs5InputReport(input: MockControllerInput): number[] {
   }
 
   return r;
+}
+
+// --- DS5 mock-parity helpers (#123) -----------------------------------------
+
+const HID_INJECT_MESSAGES: Record<HidErrorInjectable, string> = {
+  'hid-write': 'HID-Write fehlgeschlagen: Mock-Fehler-Injektion aktiv (hid-write)',
+  'hid-connect': 'HID-Connect fehlgeschlagen: Mock-Fehler-Injektion aktiv (hid-connect)',
+  'hid-read': 'HID-Read fehlgeschlagen: Mock-Fehler-Injektion aktiv (hid-read)',
+};
+
+/** Reject like a failed Tauri command while the MockPanel armed `what` (#123,
+ * #126 hardware-validation rehearsal). The rejection is a plain string, the
+ * same shape Tauri's `invoke` produces for `Result<T, String>` errors. */
+function assertHidInjectable(what: HidErrorInjectable): void {
+  if (getMockState().hid.injectErrors.includes(what)) {
+    throw HID_INJECT_MESSAGES[what];
+  }
+}
+
+/**
+ * Extract the lightbar RGB from an output-report frame exactly as
+ * `hid_send_output_report` receives it — with the report-id byte at index 0
+ * (TauriHIDDevice.sendReport prepends it):
+ *
+ *   - USB (0x02): [id][47-byte common payload] → common[k] = frame[k + 1], so
+ *     the RGB bytes sit at frame offsets 45-47 (common 44-46, kernel
+ *     dualsense_output_report_usb layout; player LEDs @ common 43).
+ *   - BT (0x31):  [id][seq<<4][0x10][47 common][24 pad][4 CRC] → RGB at 47-49.
+ *
+ * Returns null for unknown report ids / too-short frames — the mirror keeps
+ * its previous value in that case.
+ */
+function extractLightbar(data: number[]): [number, number, number] | null {
+  const commonOff = data[0] === 0x02 ? 1 : data[0] === 0x31 ? 3 : null;
+  if (commonOff === null) return null;
+  const off = commonOff + 44;
+  if (data.length < off + 3) return null;
+  return [data[off], data[off + 1], data[off + 2]];
+}
+
+/** Validate the CRC32 trailer of a BT output frame `[0x31, seq, 0x10, …,
+ * CRC-LE]` (seed [0xA2, 0x31] over the frame minus id byte and 4 trailer
+ * bytes — fillOutputReportCrc framing). A real controller silently drops
+ * CRC-corrupt frames; the mock mirrors that (#123). */
+function btOutputCrcValid(data: number[]): boolean {
+  const end = data.length - 4;
+  if (end <= 1) return false;
+  const got =
+    (data[end] | (data[end + 1] << 8) | (data[end + 2] << 16) | (data[end + 3] << 24)) >>> 0;
+  return crc32(new Uint8Array(data.slice(1, end)), [0xa2, 0x31]) === got;
+}
+
+/**
+ * Build a 77-byte BT input payload exactly as the Rust HID layer would deliver
+ * it after stripping the report id (#123): `[seq<<2, …body…, CRC32-LE]`, CRC
+ * over seed [0xA1, 0xB2] via fillBtInputCrc (validateBtInputCrc framing). The
+ * seq lives in the top 6 bits of byte 0 — the receiver reads
+ * `(raw[0] >> 2) & 0x3f` and counts cyclic mod 64. The 64-byte USB body is
+ * placed at offset 1 so every common offset (sticks @0-3, battery @52, …)
+ * re-aligns once the ControllerManager drops the seq byte (BT common starts at
+ * data[1], controller-manager.ts). Cyclic seq++ mod 64 per report.
+ */
+function buildBtInputFrame(input: MockControllerInput): number[] {
+  const frame = new Uint8Array(77);
+  frame[0] = (mockHidRuntime.btInputSeq & 0x3f) << 2;
+  mockHidRuntime.btInputSeq = (mockHidRuntime.btInputSeq + 1) & 0x3f;
+  frame.set(buildDs5InputReport(input), 1);
+  fillBtInputCrc(frame);
+  return Array.from(frame);
+}
+
+function padTo64(bytes: number[]): number[] {
+  const out = bytes.slice(0, 64);
+  while (out.length < 64) out.push(0);
+  return out;
+}
+
+/** Mock serial for the system-info family: slice(4,6) = "ZB" so ds5Color()
+ * resolves a known color code. */
+const MOCK_SYSTEM_INFO = 'XXXXZB0001-MOCK01';
+const MOCK_BD_ADDR = [0xa4, 0xb5, 0xc6, 0xd7, 0xe8, 0xf9];
+/** In-memory module blob: 12 u16 stick-calibration values (center-ish). */
+const MOCK_MODULE_DATA = [0x0400, 0x0400, 0x0800, 0x0800, 0x0c00, 0x0c00, 0, 0, 0, 0, 0, 0];
+
+/**
+ * Fill `mockFeatureReplies` the way a real DS5 answers the feature protocol
+ * (#123), so calibration / NVS / info flows run end-to-end in mock mode:
+ *
+ *   - calibration command family (0x82/0x83): reply staged on 0x83 with the
+ *     verified big-endian rule `[0x83, 1, cmd[2], cmd[0] === 2 ? 2 : 1]`
+ *     (calibrateSticks/Range begin+end each check getUint32(0, false)).
+ *   - 0x80 family: the real flows read the reply back on 0x81 — getSystemInfo
+ *     ([base,num]), NVS status ([3,3] → 0x03030200 unlocked/permanent), BD
+ *     addr ([9,2]), module data ([12,2]) — so an echo
+ *     `[0x81, cmd[0], cmd[1], 2, …payload]` satisfies every check. A 0x80
+ *     blob is additionally staged for direct receive(0x80) reads (the task
+ *     brief's mock-parity contract; no real flow reads 0x80 back).
+ *   - calibration data writes (cmd[0] === 0x08) are fire-and-forget: accepted,
+ *     no reply staged.
+ */
+function stageDs5FeatureReply(reportId: number, data: number[]): void {
+  const buf = data;
+  switch (reportId) {
+    case 0x80: {
+      if (buf[0] === 0x08) return; // calibration data write — accepted, no reply
+      const reply = padTo64([0x81, buf[0] ?? 0, buf[1] ?? 0, 2]);
+      if (buf[0] === 9) {
+        // BD addr: formatMacFromView(data, 4) reads 6 bytes from offset 4.
+        MOCK_BD_ADDR.forEach((b, i) => {
+          reply[4 + i] = b;
+        });
+      } else if (buf[0] === 12) {
+        // In-memory module data: 12 u16 LE values from offset 4.
+        MOCK_MODULE_DATA.forEach((v, i) => {
+          reply[4 + i * 2] = v & 0xff;
+          reply[5 + i * 2] = (v >> 8) & 0xff;
+        });
+      } else if (buf[0] === 1 || buf[0] === 5) {
+        // System-info family: ASCII payload, space-padded to the buffer end.
+        for (let i = 4; i < 64; i++) reply[i] = 0x20;
+        for (let i = 0; i < MOCK_SYSTEM_INFO.length; i++) {
+          reply[4 + i] = MOCK_SYSTEM_INFO.charCodeAt(i);
+        }
+      }
+      mockFeatureReplies.set(0x81, reply);
+      const blob = reply.slice();
+      blob[0] = 0x80;
+      mockFeatureReplies.set(0x80, blob);
+      return;
+    }
+    case 0x82:
+    case 0x83: {
+      // Calibration command ack — big-endian value in the 0x83 get.
+      mockFeatureReplies.set(0x83, padTo64([0x83, 1, buf[2] ?? 0, buf[0] === 2 ? 2 : 1]));
+      return;
+    }
+    default:
+      // 0x90 (NVS unlock/lock) family etc. — no canned reply path exists in
+      // the mock, so the legacy dummy pattern is returned by receive().
+      return;
+  }
 }
 
 async function flashReadSequence(): Promise<FlashReadResult> {
@@ -269,25 +411,68 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
 
   // --- hid / controller ---
   hid_connect: async (args) => {
+    assertHidInjectable('hid-connect');
     await delay(100);
     console.log(`[mock] hid_connect(vid=${args?.vendorId}, pid=${args?.productId})`);
+    // Remember the transport the way a real connection presents it (#123):
+    // BT pid 0x0df2 delivers 0x31 input frames, the USB pids 0x01/0x02.
+    const transport = Number(args?.productId) === 0x0df2 ? 'bt' : 'usb';
+    mockState.update((s) => ({
+      ...s,
+      hid: { ...s.hid, connected: true, simulateTransport: transport },
+    }));
   },
-  hid_disconnect: () => {},
+  hid_disconnect: () => {
+    mockState.update((s) => ({ ...s, hid: { ...s.hid, connected: false } }));
+  },
   hid_list_devices: () => {
     const s = getMockState();
     return <HidDeviceInfo[]>s.hid.devices;
   },
-  hid_send_feature_report: () => {},
+  hid_send_feature_report: (args) => {
+    const reportId = Number(args?.reportId ?? 0);
+    const data = (args?.data as number[] | undefined) ?? [];
+    stageDs5FeatureReply(reportId, data);
+    // void, like the Rust command boundary (Result<(), String>).
+  },
   hid_receive_feature_report: (args) => {
+    const reportId = Number(args?.reportId ?? 0);
     const len = Number(args?.length ?? 64);
+    const staged = mockFeatureReplies.get(reportId);
+    if (staged) {
+      const out = staged.slice(0, len);
+      while (out.length < len) out.push(0);
+      return out;
+    }
     return Array.from({ length: len }, (_, i) => i % 256);
   },
-  hid_send_output_report: () => {},
+  hid_send_output_report: (args) => {
+    assertHidInjectable('hid-write');
+    const data = (args?.data as number[] | undefined) ?? [];
+    // BT output frames: a real controller silently drops CRC-corrupt frames.
+    if (data[0] === 0x31 && !btOutputCrcValid(data)) return;
+    // Mirror the DS5 output report (report id 0x02, 47-byte common payload)
+    // so tests can assert protocol behavior without hardware (#123).
+    mockHidRuntime.lastOutputReport = [...data];
+    const lightbar = extractLightbar(data);
+    if (lightbar) mockHidRuntime.mirroredLightbar = lightbar;
+  },
   hid_poll: () => {
+    assertHidInjectable('hid-read');
     const s = getMockState();
+    if (!s.hid.connected) {
+      return <HidPollResult>{ connected: false, reports: [], dropped_reports: 0 };
+    }
+    if (s.hid.simulateTransport === 'bt') {
+      return <HidPollResult>{
+        connected: true,
+        reports: [{ report_id: 0x31, data: buildBtInputFrame(s.hid.input) }],
+        dropped_reports: 0,
+      };
+    }
     return <HidPollResult>{
-      connected: s.hid.connected,
-      reports: s.hid.connected ? [{ report_id: 1, data: buildDs5InputReport(s.hid.input) }] : [],
+      connected: true,
+      reports: [{ report_id: 1, data: buildDs5InputReport(s.hid.input) }],
       dropped_reports: 0,
     };
   },
