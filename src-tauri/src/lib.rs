@@ -304,6 +304,7 @@ pub fn run() {
             commands::hid::hid_receive_feature_report,
             commands::hid::hid_send_output_report,
             commands::hid::hid_poll,
+            commands::hid::hid_diagnostics,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

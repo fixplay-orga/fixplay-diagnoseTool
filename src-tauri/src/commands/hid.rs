@@ -1,9 +1,9 @@
-use crate::state::AppState;
+use crate::state::{AppState, HidShared};
 use hidapi::HidApi;
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc};
 use tauri::State;
 use tracing::info;
 
@@ -34,8 +34,21 @@ pub struct HidPollResult {
 pub enum HidCmd {
     SendFeatureReport(u8, Vec<u8>, mpsc::SyncSender<Result<(), String>>),
     GetFeatureReport(u8, usize, mpsc::SyncSender<Result<Vec<u8>, String>>),
-    WriteOutput(Vec<u8>, mpsc::SyncSender<Result<(), String>>),
+    /// Reply carries the bytes actually written — hidapi's write() result was
+    /// previously discarded, making a failed write indistinguishable from a
+    /// successful one (#115).
+    WriteOutput(Vec<u8>, mpsc::SyncSender<Result<usize, String>>),
     Stop,
+}
+
+/// Pure check of the hidapi write result against the expected payload length
+/// (unit-testable, German user-facing message).
+fn check_write_result(written: usize, expected: usize) -> Result<usize, String> {
+    if written == expected {
+        Ok(written)
+    } else {
+        Err(format!("HID-Write unvollständig: {written} von {expected} Bytes"))
+    }
 }
 
 /// Maximum input reports buffered for `hid_poll` before the oldest are dropped
@@ -104,8 +117,7 @@ impl Drop for AliveGuard {
 fn run_hid_thread(
     device:  hidapi::HidDevice,
     cmd_rx:  mpsc::Receiver<HidCmd>,
-    reports: Arc<Mutex<VecDeque<HidReport>>>,
-    dropped: Arc<AtomicU64>,
+    shared:  &HidShared,
     stop:    Arc<AtomicBool>,
     alive:   Arc<AtomicBool>,
 ) {
@@ -137,10 +149,20 @@ fn run_hid_thread(
                     reply.send(r).ok();
                 }
                 Ok(HidCmd::WriteOutput(data, reply)) => {
-                    let r = device
-                        .write(&data)
-                        .map(|_| ())
-                        .map_err(|e| e.to_string());
+                    let expected = data.len();
+                    let r = match device.write(&data) {
+                        Ok(n) => check_write_result(n, expected),
+                        Err(e) => Err(e.to_string()),
+                    };
+                    match &r {
+                        Ok(_) => {
+                            shared.write_count.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(e) => {
+                            shared.write_errors.fetch_add(1, Ordering::Relaxed);
+                            *shared.last_write_error.lock().unwrap() = Some(e.clone());
+                        }
+                    }
                     reply.send(r).ok();
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
@@ -151,8 +173,8 @@ fn run_hid_thread(
         // Read one input report — 5 ms timeout keeps the command loop responsive
         if let Ok(n) = device.read_timeout(&mut buf, 5) {
             if let Some(report) = parse_input_report(&buf, n) {
-                let mut q = reports.lock().unwrap();
-                push_report(&mut q, &dropped, report);
+                let mut q = shared.reports.lock().unwrap();
+                push_report(&mut q, &shared.dropped_reports, report);
             }
         }
     }
@@ -163,19 +185,17 @@ fn run_hid_thread(
 // ── helper: send a command and wait for the reply ───────────────────────────
 
 macro_rules! send_cmd {
-    ($state:expr, $cmd:expr) => {{
+    ($cmd_tx:expr, $cmd:expr) => {{
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
         {
-            let guard = $state.hid_cmd_tx.lock().unwrap();
+            let guard = $cmd_tx.lock().unwrap();
             let tx = guard
                 .as_ref()
-                .ok_or_else(|| "No HID device connected".to_string())?;
-            tx.send($cmd(reply_tx))
-                .map_err(|_| "HID thread disconnected".to_string())?;
+                .ok_or_else(|| "Kein HID-Gerät verbunden".to_string())?;
+            tx.try_send($cmd(reply_tx))
+                .map_err(|_| "HID-Warteschlange voll oder HID-Thread weg".to_string())?;
         }
-        reply_rx
-            .recv()
-            .map_err(|_| "HID thread gone".to_string())?
+        reply_rx.recv().map_err(|_| "HID-Thread beendet".to_string())?
     }};
 }
 
@@ -202,31 +222,31 @@ pub fn hid_list_devices() -> Result<Vec<HidDeviceInfo>, String> {
 #[tauri::command]
 pub fn hid_connect(vendor_id: u16, product_id: u16, state: State<'_, AppState>) -> Result<(), String> {
     // Stop any existing connection
-    if let Some(tx) = state.hid_cmd_tx.lock().unwrap().take() {
+    if let Some(tx) = state.hid.cmd_tx.lock().unwrap().take() {
         let _ = tx.send(HidCmd::Stop);
     }
-    if let Some(s) = state.hid_stop.lock().unwrap().take() {
+    if let Some(s) = state.hid.stop.lock().unwrap().take() {
         s.store(true, Ordering::Relaxed);
     }
 
     let api    = HidApi::new().map_err(|e| e.to_string())?;
     let device = api.open(vendor_id, product_id).map_err(|e| e.to_string())?;
 
-    let reports    = Arc::clone(&state.hid_reports);
+    let shared = Arc::clone(&state.hid);
     let stop       = Arc::new(AtomicBool::new(false));
     let stop_clone = Arc::clone(&stop);
     let alive      = Arc::new(AtomicBool::new(true));
     let alive_clone = Arc::clone(&alive);
     let (cmd_tx, cmd_rx) = mpsc::sync_channel::<HidCmd>(32);
 
-    *state.hid_cmd_tx.lock().unwrap() = Some(cmd_tx);
-    *state.hid_stop.lock().unwrap()   = Some(stop);
-    *state.hid_alive.lock().unwrap()  = Some(alive);
-    state.hid_reports.lock().unwrap().clear();
-    state.hid_dropped_reports.store(0, Ordering::Relaxed);
+    *shared.cmd_tx.lock().unwrap() = Some(cmd_tx);
+    *shared.stop.lock().unwrap()   = Some(stop);
+    *shared.alive.lock().unwrap()  = Some(alive);
+    shared.reports.lock().unwrap().clear();
+    shared.dropped_reports.store(0, Ordering::Relaxed);
 
-    let dropped = Arc::clone(&state.hid_dropped_reports);
-    std::thread::spawn(move || run_hid_thread(device, cmd_rx, reports, dropped, stop_clone, alive_clone));
+    let handle = std::thread::spawn(move || run_hid_thread(device, cmd_rx, &shared, stop_clone, alive_clone));
+    *state.hid.thread.lock().unwrap() = Some(handle);
 
     info!("HID connected: vendor={:#06x} product={:#06x}", vendor_id, product_id);
     Ok(())
@@ -234,34 +254,69 @@ pub fn hid_connect(vendor_id: u16, product_id: u16, state: State<'_, AppState>) 
 
 #[tauri::command]
 pub fn hid_disconnect(state: State<'_, AppState>) -> Result<(), String> {
-    if let Some(tx) = state.hid_cmd_tx.lock().unwrap().take() {
+    if let Some(tx) = state.hid.cmd_tx.lock().unwrap().take() {
         let _ = tx.send(HidCmd::Stop);
     }
-    if let Some(s) = state.hid_stop.lock().unwrap().take() {
+    if let Some(s) = state.hid.stop.lock().unwrap().take() {
         s.store(true, Ordering::Relaxed);
     }
-    state.hid_alive.lock().unwrap().take();
-    state.hid_reports.lock().unwrap().clear();
+    state.hid.alive.lock().unwrap().take();
+    state.hid.reports.lock().unwrap().clear();
     info!("HID disconnected");
     Ok(())
 }
 
 #[tauri::command]
-pub fn hid_send_feature_report(report_id: u8, data: Vec<u8>, state: State<'_, AppState>) -> Result<(), String> {
-    send_cmd!(state, |reply| HidCmd::SendFeatureReport(report_id, data, reply))
+pub async fn hid_send_feature_report(
+    report_id: u8,
+    data: Vec<u8>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if data.len() > 512 {
+        return Err(format!(
+            "Feature-Report-Länge {} überschreitet Maximum 512",
+            data.len()
+        ));
+    }
+    let hid = Arc::clone(&state.hid);
+    // Arc-Clone statt State-Borrow: spawn_blocking braucht 'static.
+    tokio::task::spawn_blocking(move || {
+        send_cmd!(hid.cmd_tx, |reply| HidCmd::SendFeatureReport(report_id, data, reply))
+    })
+    .await
+    .map_err(|e| format!("HID-Aufgabe fehlgeschlagen: {e}"))?
 }
 
 #[tauri::command]
-pub fn hid_receive_feature_report(report_id: u8, length: usize, state: State<'_, AppState>) -> Result<Vec<u8>, String> {
+pub async fn hid_receive_feature_report(
+    report_id: u8,
+    length: usize,
+    state: State<'_, AppState>,
+) -> Result<Vec<u8>, String> {
     if length > 512 {
         return Err(format!("Feature-Report-Länge {} überschreitet Maximum 512", length));
     }
-    send_cmd!(state, |reply| HidCmd::GetFeatureReport(report_id, length, reply))
+    let hid = Arc::clone(&state.hid);
+    // Arc-Clone statt State-Borrow: spawn_blocking braucht 'static.
+    tokio::task::spawn_blocking(move || {
+        send_cmd!(hid.cmd_tx, |reply| HidCmd::GetFeatureReport(report_id, length, reply))
+    })
+    .await
+    .map_err(|e| format!("HID-Aufgabe fehlgeschlagen: {e}"))?
 }
 
 #[tauri::command]
-pub fn hid_send_output_report(data: Vec<u8>, state: State<'_, AppState>) -> Result<(), String> {
-    send_cmd!(state, |reply| HidCmd::WriteOutput(data, reply))
+pub async fn hid_send_output_report(
+    data: Vec<u8>,
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    let hid = Arc::clone(&state.hid);
+    // Arc-Clone statt State-Borrow: spawn_blocking braucht 'static.
+    tokio::task::spawn_blocking(move || {
+        send_cmd!(hid.cmd_tx, |reply| HidCmd::WriteOutput(data, reply))
+    })
+    .await
+    .map_err(|e| format!("HID-Aufgabe fehlgeschlagen: {e}"))?
 }
 
 #[tauri::command]
@@ -272,22 +327,55 @@ pub fn hid_poll(state: State<'_, AppState>) -> HidPollResult {
     // tear down the stale cmd channel so the frontend's next poll sees
     // connected=false and disconnects instead of stalling on a dead handle.
     let alive = state
-        .hid_alive
+        .hid
+        .alive
         .lock()
         .unwrap()
         .as_ref()
         .map(|a| a.load(Ordering::Relaxed))
         .unwrap_or(false);
-    let mut cmd = state.hid_cmd_tx.lock().unwrap();
+    let mut cmd = state.hid.cmd_tx.lock().unwrap();
     if !alive && cmd.is_some() {
         let _ = cmd.take();
     }
     let connected = alive && cmd.is_some();
     drop(cmd);
 
-    let reports: Vec<HidReport> = state.hid_reports.lock().unwrap().drain(..).collect();
-    let dropped_reports = state.hid_dropped_reports.swap(0, Ordering::Relaxed);
+    let reports: Vec<HidReport> = state.hid.reports.lock().unwrap().drain(..).collect();
+    let dropped_reports = state.hid.dropped_reports.swap(0, Ordering::Relaxed);
     HidPollResult { connected, reports, dropped_reports }
+}
+
+/// Frontend-facing HID diagnostics (write statistics + last error) for the
+/// repair-context diagnose block (#124). Pure state read — sync is fine.
+#[derive(Serialize)]
+pub struct HidDiagnostics {
+    pub connected:        bool,
+    pub open_path:        Option<String>,
+    pub write_count:      u64,
+    pub write_errors:     u64,
+    pub dropped_reports:  u64,
+    pub last_write_error: Option<String>,
+}
+
+#[tauri::command]
+pub fn hid_diagnostics(state: State<'_, AppState>) -> HidDiagnostics {
+    let hid = &state.hid;
+    let alive = hid
+        .alive
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|a| a.load(Ordering::Relaxed))
+        .unwrap_or(false);
+    HidDiagnostics {
+        connected: alive && hid.cmd_tx.lock().unwrap().is_some(),
+        open_path: hid.open_path.lock().unwrap().clone(),
+        write_count: hid.write_count.load(Ordering::Relaxed),
+        write_errors: hid.write_errors.load(Ordering::Relaxed),
+        dropped_reports: hid.dropped_reports.load(Ordering::Relaxed),
+        last_write_error: hid.last_write_error.lock().unwrap().clone(),
+    }
 }
 
 #[cfg(test)]
@@ -358,6 +446,23 @@ mod tests {
         push_report(&mut q, &dropped, HidReport { report_id: 9, data: vec![9] });
         assert_eq!(q.len(), MAX_REPORT_QUEUE); // cap held
         assert_eq!(dropped.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn write_output_check_full_write_is_ok() {
+        assert_eq!(check_write_result(47, 47), Ok(47));
+    }
+
+    #[test]
+    fn write_output_check_partial_write_is_err() {
+        let r = check_write_result(30, 47);
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("30"), "Meldung nennt geschriebene Bytes");
+    }
+
+    #[test]
+    fn write_output_check_zero_bytes_is_err() {
+        assert!(check_write_result(0, 47).is_err());
     }
 
     #[test]

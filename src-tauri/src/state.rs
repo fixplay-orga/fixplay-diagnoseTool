@@ -43,24 +43,56 @@ pub struct AppState {
     /// Commands recently written to the port. The PS5 UART mirrors received
     /// characters back; the reader drops lines matching one of these echoes.
     pub recent_sent:        Arc<Mutex<VecDeque<String>>>,
-    /// Command channel to the HID reader thread.
-    pub hid_cmd_tx:         Mutex<Option<mpsc::SyncSender<HidCmd>>>,
-    /// Stop flag for the HID reader thread.
-    pub hid_stop:           Mutex<Option<Arc<AtomicBool>>>,
-    /// Liveness flag for the HID reader thread — set false on thread exit (any
-    /// path, via a Drop guard) so `hid_poll` can distinguish a real disconnect
-    /// from a merely idle device. Without this the frontend kept polling a dead
-    /// handle forever (silent stall) because `hid_cmd_tx` stayed `Some`.
-    pub hid_alive:          Mutex<Option<Arc<AtomicBool>>>,
-    /// Input reports buffered by the HID reader thread — drained by hid_poll.
-    pub hid_reports:        Arc<Mutex<VecDeque<HidReport>>>,
-    /// HID input reports dropped because the buffer was full (512 cap).
-    pub hid_dropped_reports: Arc<AtomicU64>,
+    /// HID connection state (reader thread + channel + write statistics).
+    pub hid:                Arc<HidShared>,
     /// I2C-over-USB-CDC bridge (Raspberry Pi Pico running fixplay-pico-i2c).
     /// Sync request/response — no reader thread, no shared buffers.
     pub i2c:                Mutex<Option<I2cBridge>>,
     /// Xbox error-code database (cache → bundled resource → background fetch).
     pub xbox_error_db:      Arc<Mutex<Option<XboxErrorDb>>>,
+}
+
+/// Shared HID connection state — reader thread, command channel, counters.
+/// Held as one Arc so async commands can clone it into spawn_blocking
+/// closures without borrowing `State<'_>`.
+pub struct HidShared {
+    /// Command channel to the HID reader thread.
+    pub cmd_tx:           Arc<Mutex<Option<mpsc::SyncSender<HidCmd>>>>,
+    /// Stop flag for the HID reader thread.
+    pub stop:             Mutex<Option<Arc<AtomicBool>>>,
+    /// Liveness flag — set false on thread exit (any path, via AliveGuard).
+    pub alive:            Mutex<Option<Arc<AtomicBool>>>,
+    /// Join handle of the reader thread — joined on reconnect/disconnect.
+    pub thread:           Mutex<Option<JoinHandle<()>>>,
+    /// Input reports buffered for `hid_poll`.
+    pub reports:          Mutex<VecDeque<HidReport>>,
+    /// Input reports dropped because the buffer was full (512 cap).
+    pub dropped_reports:  AtomicU64,
+    /// Successful output writes (byte-count verified).
+    pub write_count:      AtomicU64,
+    /// Failed output writes (partial write or hidapi error).
+    pub write_errors:     AtomicU64,
+    /// Last write error message, for the HID-diagnostics block.
+    pub last_write_error: Mutex<Option<String>>,
+    /// OS device path the connection was opened with (device picker, #117).
+    pub open_path:        Mutex<Option<String>>,
+}
+
+impl Default for HidShared {
+    fn default() -> Self {
+        Self {
+            cmd_tx:           Arc::new(Mutex::new(None)),
+            stop:             Mutex::new(None),
+            alive:            Mutex::new(None),
+            thread:           Mutex::new(None),
+            reports:          Mutex::new(VecDeque::with_capacity(512)),
+            dropped_reports:  AtomicU64::new(0),
+            write_count:      AtomicU64::new(0),
+            write_errors:     AtomicU64::new(0),
+            last_write_error: Mutex::new(None),
+            open_path:        Mutex::new(None),
+        }
+    }
 }
 
 impl Default for AppState {
@@ -83,11 +115,7 @@ impl Default for AppState {
             pending_entries:    Arc::new(Mutex::new(VecDeque::with_capacity(200))),
             loopback_triggered: Arc::new(AtomicBool::new(false)),
             recent_sent:        Arc::new(Mutex::new(VecDeque::with_capacity(20))),
-            hid_cmd_tx:         Mutex::new(None),
-            hid_stop:           Mutex::new(None),
-            hid_alive:          Mutex::new(None),
-            hid_reports:         Arc::new(Mutex::new(VecDeque::with_capacity(512))),
-            hid_dropped_reports: Arc::new(AtomicU64::new(0)),
+            hid:                Arc::new(HidShared::default()),
             i2c:                Mutex::new(None),
             xbox_error_db:      Arc::new(Mutex::new(None)),
         }
