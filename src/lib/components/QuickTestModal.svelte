@@ -118,6 +118,29 @@
   let lightsInterval: ReturnType<typeof setInterval> | null = null;
   let micActive = $state(false);
 
+  // ── Actuator lifecycle (#122) ──
+  // Bumped on every test start, close() and unmount. Async continuations that
+  // captured an older token (e.g. the speaker test's delayed doneCb) must not
+  // clobber the status of a newer run once the modal was closed or another
+  // test started.
+  let actuatorToken = 0;
+
+  /** Best-effort reset of every physical actuator: motors, triggers, lights,
+   *  speaker. Used by close() and onDestroy so nothing keeps running on the
+   *  controller after the quick test goes away. */
+  function resetActuators(): void {
+    if (!manager) return;
+    void manager.setVibration(0, 0).catch(() => {});
+    void manager
+      .setAdaptiveTrigger(
+        { mode: 'off', force: 0, start: 0, end: 0 },
+        { mode: 'off', force: 0, start: 0, end: 0 }
+      )
+      .catch(() => {});
+    void manager.resetLights().catch(() => {});
+    void manager.resetSpeakerSettings().catch(() => {});
+  }
+
   // ── Buttons test: require every digital button to be pressed at least once ──
   // The analog triggers (l2/r2) are exercised via the trigger readout, not here.
   const EXPECTED_BUTTONS = [
@@ -262,6 +285,7 @@
 
   async function runTest(id: TestId) {
     if (!manager) return;
+    const token = ++actuatorToken;
     statuses[id] = 'running';
     try {
       switch (id) {
@@ -290,6 +314,10 @@
           break;
         case 'speaker':
           await manager.setSpeakerTone('speaker', 1000, (r) => {
+            // The doneCb can fire long after this run was replaced or the
+            // modal closed — a stale callback must not overwrite the status
+            // of the current run (or of a newer test).
+            if (token !== actuatorToken) return;
             statuses[id] = r.success ? 'pass' : 'fail';
           });
           break;
@@ -312,7 +340,13 @@
           }
           break;
       }
-      pushControllerLog(get(LL).quickTest.testCompletedLog({ id }), 'info');
+      // 'lights' logs its own 'completed' entry once the verdict exists
+      // (stopLightsTest / interval error) — startLightsTest returns
+      // immediately while the test is still cycling, so the generic entry
+      // would fire at start with no verdict (#122).
+      if (id !== 'lights') {
+        pushControllerLog(get(LL).quickTest.testCompletedLog({ id }), 'info');
+      }
     } catch (e) {
       statuses[id] = 'fail';
       pushControllerLog(
@@ -359,6 +393,9 @@
           get(LL).quickTest.lightsFailedLog({ error: e instanceof Error ? e.message : String(e) }),
           'error'
         );
+        // The error is the verdict — log the completed entry here too, since
+        // stopLightsTest is never reached (the Stop button is already gone).
+        pushControllerLog(get(LL).quickTest.testCompletedLog({ id: 'lights' }), 'error');
       }
     }, 200);
   }
@@ -383,6 +420,11 @@
       }
     }
     statuses.lights = lightsTestFailed ? 'fail' : 'pass';
+    // The verdict only exists here — log the completed entry with it (#122).
+    pushControllerLog(
+      get(LL).quickTest.testCompletedLog({ id: 'lights' }),
+      lightsTestFailed ? 'error' : 'info'
+    );
   }
 
   function close() {
@@ -393,17 +435,10 @@
     abortButtonsTest();
     abortBtTest();
     missingButtons = [];
-    if (manager) {
-      manager.setVibration(0, 0).catch(() => {});
-      manager
-        .setAdaptiveTrigger(
-          { mode: 'off', force: 0, start: 0, end: 0 },
-          { mode: 'off', force: 0, start: 0, end: 0 }
-        )
-        .catch(() => {});
-      manager.resetLights().catch(() => {});
-      manager.resetSpeakerSettings().catch(() => {});
-    }
+    // Invalidate in-flight continuations (stale speaker doneCb), then silence
+    // every actuator — same reset the unmount path uses (#122).
+    actuatorToken++;
+    resetActuators();
     micActive = false;
     btVerdict = null;
     open = false;
@@ -420,6 +455,8 @@
 
   // Tear down subscriptions/timers if the panel unmounts mid-test (route
   // change). close() covers the user-initiated case; this covers the rest.
+  // Actuators are reset here too — an unmount must not leave vibration,
+  // triggers, lights or speaker running on the controller (#122).
   onDestroy(() => {
     abortButtonsTest();
     abortBtTest();
@@ -427,6 +464,8 @@
       clearInterval(lightsInterval);
       lightsInterval = null;
     }
+    actuatorToken++;
+    resetActuators();
   });
 
   function statusColor(s: TestStatus): string {
@@ -758,7 +797,7 @@
             <div class="flex items-center gap-3">
               <span
                 class="text-xs font-medium {statusColor(statuses[test.id])}"
-                data-testid={test.id === 'bt' ? 'status-bt' : undefined}
+                data-testid={`status-${test.id}`}
               >
                 {statusLabel(statuses[test.id])}{test.id === 'bt' && btVerdict
                   ? ` — ${btVerdict}`
@@ -778,7 +817,7 @@
                   onclick={() => runTest(test.id)}
                   disabled={statuses[test.id] === 'running'}
                   aria-label={$LL.quickTest.startAria()}
-                  data-testid={test.id === 'bt' ? 'test-bt' : undefined}
+                  data-testid={`test-${test.id}`}
                 >
                   {#if statuses[test.id] === 'running'}
                     <Loader2 class="h-4 w-4 animate-spin" />
