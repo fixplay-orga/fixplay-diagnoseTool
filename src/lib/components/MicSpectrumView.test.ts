@@ -43,7 +43,12 @@ describe('MicSpectrumView error localization (#125)', () => {
     stubMediaDevices([]);
     render(MicSpectrumView, { props: { active: true } });
     await waitFor(() => {
-      expect(screen.getByText('Kein DualSense-Mikrofon gefunden')).toBeInTheDocument();
+      // Canonical tester.micNotFound wording (15d) — same key SpeakerMicLoopback uses.
+      expect(
+        screen.getByText(
+          'Kein DualSense-Mikrofon gefunden. Controller per USB verbinden und Mic-Freigabe erteilen.'
+        )
+      ).toBeInTheDocument();
     });
   });
 
@@ -54,7 +59,7 @@ describe('MicSpectrumView error localization (#125)', () => {
     render(MicSpectrumView, { props: { active: true } });
     await waitFor(() => {
       expect(
-        screen.getByText('Mikrofon-Zugriff verweigert — in den Systemeinstellungen erlauben')
+        screen.getByText('Mikrofon-Zugriff verweigert. Bitte in den Browser-Einstellungen erlauben.')
       ).toBeInTheDocument();
     });
   });

@@ -4,7 +4,7 @@
   // store, so every edit changes what the next backend `invoke()` returns in
   // the hosted web preview. State persists to localStorage (see state.ts).
 
-  import { mockState, resetMockState, DEFAULT_MOCK_STATE, ERROR_INJECTABLE, HID_ERROR_INJECTABLE } from '$lib/mock/state';
+  import { mockState, resetMockState, DEFAULT_MOCK_STATE, ERROR_INJECTABLE, HID_ERROR_INJECTABLE, nextMockHidPath } from '$lib/mock/state';
   import type {
     MockFlashState,
     MockUartState,
@@ -334,7 +334,7 @@
             serial_number: null,
             usage_page: 1,
             usage: 5,
-            path: `/dev/hidraw${4 + s.hid.devices.length}`,
+            path: nextMockHidPath(s.hid.devices),
           },
         ],
       },

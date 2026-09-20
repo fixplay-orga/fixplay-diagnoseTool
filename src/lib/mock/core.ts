@@ -469,7 +469,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     await delay(100);
     console.log(`[mock] hid_connect(vid=${args?.vendorId}, pid=${args?.productId})`);
     // Remember the transport the way a real connection presents it (#123):
-    // BT pid 0x0df2 delivers 0x31 input frames, the USB pids 0x01/0x02.
+    // BT pid 0x0df2 delivers 0x31 input frames; the USB pids (0x0ce6/0x0e5f,
+    // controller-manager.ts) deliver input report id 0x01 — 0x01/0x02 are
+    // report ids, not product ids (0x02 = USB output report).
     const transport = Number(args?.productId) === 0x0df2 ? 'bt' : 'usb';
     mockState.update((s) => ({
       ...s,
@@ -484,6 +486,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     return <HidDeviceInfo[]>s.hid.devices;
   },
   hid_send_feature_report: (args) => {
+    // An armed 'hid-write' also rejects feature writes — the MockPanel's
+    // injection hint promises every write path fails while armed. The write
+    // diagnostics deliberately stay output-only: Rust counts only WriteOutput
+    // results in write_count/write_errors (hid.rs), never feature reports.
+    assertHidInjectable('hid-write');
     const reportId = Number(args?.reportId ?? 0);
     const data = (args?.data as number[] | undefined) ?? [];
     stageDs5FeatureReply(reportId, data);
@@ -500,6 +507,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       return MOCK_DEVICE_INFO.slice(0, len);
     }
     const staged = mockFeatureReplies.get(reportId);
+    // Reads never delete: a staged reply stays readable for repeated receives
+    // (idempotent by design — see mockFeatureReplies in state.ts).
     if (staged) {
       const out = staged.slice(0, len);
       while (out.length < len) out.push(0);
@@ -529,6 +538,10 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (lightbar) mockHidRuntime.mirroredLightbar = lightbar;
   },
   hid_poll: () => {
+    // Every `dropped_reports: 0` below is shape parity with HidDiagnostics, not
+    // a stub: the mock has no bounded report queue (Rust: MAX_REPORT_QUEUE /
+    // push_report in hid.rs) — each poll synthesizes exactly one report, so
+    // nothing is ever dropped.
     assertHidInjectable('hid-read');
     const s = getMockState();
     if (!s.hid.connected) {
@@ -557,7 +570,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       open_path: s.hid.connected ? (s.hid.devices[0]?.path ?? null) : null,
       write_count: mockHidRuntime.writeCount,
       write_errors: mockHidRuntime.writeErrors,
-      dropped_reports: mockHidRuntime.droppedReports,
+      // Shape parity, not a stub: the mock has no bounded report queue (Rust:
+      // MAX_REPORT_QUEUE/push_report in hid.rs) — 0 is always the true value.
+      dropped_reports: 0,
       last_write_error: mockHidRuntime.lastWriteError,
     };
   },

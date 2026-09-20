@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { classifyLift, normalizeTouch, TouchGestureTracker } from './touch-gesture';
+import {
+  classifyLift,
+  normalizeTouch,
+  normalizeTouchX,
+  normalizeTouchY,
+  TouchGestureTracker,
+} from './touch-gesture';
 import type { TouchPoint } from './controller-manager';
 
 /** Build a TouchPoint (active by default) at raw pad coords. */
@@ -46,8 +52,19 @@ describe('classifyLift (#57)', () => {
 describe('normalizeTouch (#125)', () => {
   it('normalizes touch y against the 1080-tall pad (#125)', () => {
     expect(normalizeTouch(960, 540).y).toBeCloseTo(0.5);
-    expect(normalizeTouch(960, 1080).y).toBe(1); // bottom edge of the 1080-tall pad
+    expect(normalizeTouch(0, 0).y).toBe(0);
+    // y=1080 is unreachable — the DS5 emits y 0..1079 and the mock clamps to
+    // 1079 (mock/core.ts buildDs5InputReport); the 1080 denominator keeps
+    // y=540 exactly centered (documented at touch-gesture.ts).
+    expect(normalizeTouch(960, 1079).y).toBeCloseTo(1079 / 1080, 5); // reachable bottom edge
     expect(normalizeTouch(1919, 0).x).toBe(1); // right edge of the 1920-wide pad
+  });
+
+  it('per-axis helpers agree with the tuple helper (15c: no dummy-axis calls)', () => {
+    expect(normalizeTouchX(1919)).toBe(normalizeTouch(1919, 0).x);
+    expect(normalizeTouchY(540)).toBe(normalizeTouch(0, 540).y);
+    expect(normalizeTouchX(0)).toBe(0);
+    expect(normalizeTouchY(1079)).toBeCloseTo(1079 / 1080, 5);
   });
 });
 

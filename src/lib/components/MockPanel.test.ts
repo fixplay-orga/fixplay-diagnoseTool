@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/svelte';
 import { describe, it, expect, beforeEach } from 'vitest';
 import MockPanel from './MockPanel.svelte';
 import { initI18n } from '$lib/i18n/init';
+import { resetMockState, getMockState } from '$lib/mock/state';
 
 // MockPanel is dev-only (MOCK builds) but it holds every {#each} block that
 // drives the live preview, and a prior HMR run surfaced a runtime
@@ -45,5 +46,24 @@ describe('MockPanel', () => {
     // No Svelte render error escapes as a thrown exception here; reaching this
     // point means the full panel mounted across all tabs.
     expect(container).toBeInTheDocument();
+  });
+
+  it('add → remove → add on the Controller tab never reuses a live device path (7a)', async () => {
+    resetMockState();
+    render(MockPanel);
+    await fireEvent.click(screen.getByRole('button', { name: /Mock/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Controller' }));
+
+    // Add a second device (hidraw4 + hidraw5), remove the first row, then add
+    // again: a length-based path formula would re-emit hidraw5 and collide
+    // with the surviving device; the live-path scan must yield hidraw6.
+    const add = () => screen.getByRole('button', { name: '+ Gerät' });
+    await fireEvent.click(add());
+    await fireEvent.click(screen.getAllByTitle('Entfernen')[0]);
+    await fireEvent.click(add());
+
+    const paths = getMockState().hid.devices.map((d) => d.path);
+    expect(paths).toEqual(['/dev/hidraw5', '/dev/hidraw6']);
+    expect(new Set(paths).size).toBe(paths.length);
   });
 });

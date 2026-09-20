@@ -86,14 +86,31 @@ export interface TrailPoint {
 }
 
 /**
- * Normalize raw touchpad coords to 0..1 for rendering (#125). x divides by the
- * max coord (1919, so the right edge maps to exactly 1) and y by the full pad
- * height 1080 (so y=540 is the vertical center and the bottom edge 1079 maps
- * to ~0.999). Exported as a pure function so the tracker and the visualizers
- * share one normalization definition.
+ * Per-axis normalizers (#125) — the denominators have exactly one definition
+ * each and `normalizeTouch` delegates to them. Exported so per-axis consumers
+ * (e.g. the TouchpadGestureVisualizer) don't have to fabricate a dummy value
+ * for the other axis to reach a single component of the shared tuple.
+ *
+ * x divides by the max coord (1919, so the right edge maps to exactly 1) and y
+ * by the full pad height 1080 (so y=540 is the vertical center and the
+ * reachable bottom edge 1079 maps to ~0.999 — y=1080 never arrives: the DS5
+ * emits y 0..1079 and the mock clamps to 1079).
+ */
+export function normalizeTouchX(x: number): number {
+  return x / (TOUCHPAD_WIDTH - 1);
+}
+
+export function normalizeTouchY(y: number): number {
+  return y / TOUCHPAD_HEIGHT;
+}
+
+/**
+ * Normalize raw touchpad coords to 0..1 for rendering (#125). Exported as a
+ * pure function so the tracker and the visualizers share one normalization
+ * definition.
  */
 export function normalizeTouch(x: number, y: number): TrailPoint {
-  return { x: x / (TOUCHPAD_WIDTH - 1), y: y / TOUCHPAD_HEIGHT };
+  return { x: normalizeTouchX(x), y: normalizeTouchY(y) };
 }
 
 /**

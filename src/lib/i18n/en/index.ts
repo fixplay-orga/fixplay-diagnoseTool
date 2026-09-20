@@ -962,11 +962,6 @@ const en: Translation = {
     newPort: 'New port (mock)',
     newEntry: 'New error entry (mock)',
   },
-  mic: {
-    micNoDevice: 'No DualSense microphone found',
-    micDenied: 'Microphone access denied — allow it in system settings',
-    micError: 'Microphone error: {error}',
-  },
 };
 
 export default en;

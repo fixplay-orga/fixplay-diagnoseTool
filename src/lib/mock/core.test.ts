@@ -280,6 +280,22 @@ describe('canned DS5 feature replies (#123)', () => {
     expect(text).toMatch(/[A-Z0-9-]/);
   });
 
+  it('receiving the same staged reply twice returns identical buffers (idempotent by design, 13b)', async () => {
+    // Staged replies are KEPT, not drained — repeated receives return the same
+    // buffer (ds5-controller's calibration flow re-reads staged 0x81/0x83).
+    await invoke('hid_send_feature_report', { reportId: 0x80, data: [1, 19] });
+    const first = await invoke<number[]>('hid_receive_feature_report', {
+      reportId: 0x81,
+      length: 64,
+    });
+    const second = await invoke<number[]>('hid_receive_feature_report', {
+      reportId: 0x81,
+      length: 64,
+    });
+    expect(second).toEqual(first);
+    expect(second[0]).toBe(0x81);
+  });
+
   it('0x80 NVS-status query [3,3] echoes 0x03030200 (unlocked) on 0x81 (queryNvStatus)', async () => {
     await invoke('hid_send_feature_report', { reportId: 0x80, data: [3, 3] });
     const out = await invoke<number[]>('hid_receive_feature_report', {
@@ -442,6 +458,28 @@ describe('mock HID error injection (#123)', () => {
     expect(err).toContain('HID-Read');
   });
 
+  it('armed hid-write also rejects hid_send_feature_report and stages no reply (13c)', async () => {
+    mockState.update((s) => ({ ...s, hid: { ...s.hid, injectErrors: ['hid-write'] } }));
+    const err = await invoke('hid_send_feature_report', { reportId: 0x82, data: [1, 1, 1] }).then(
+      () => null,
+      (e) => e
+    );
+    expect(typeof err).toBe('string');
+    expect(err).toContain('HID-Write');
+    // The rejected send staged nothing — receive(0x83) falls back to the
+    // legacy ramp dummy (first byte 0x00, not a 0x83 ack).
+    const out = await invoke<number[]>('hid_receive_feature_report', {
+      reportId: 0x83,
+      length: 64,
+    });
+    expect(out[0]).toBe(0x00);
+    // Feature writes are not counted in the write diagnostics (Rust parity:
+    // only WriteOutput increments write_count/write_errors).
+    const d = await invoke<{ write_count: number; write_errors: number }>('hid_diagnostics');
+    expect(d.write_count).toBe(0);
+    expect(d.write_errors).toBe(0);
+  });
+
   it('injection arming does not leak into other hid commands', async () => {
     mockState.update((s) => ({ ...s, hid: { ...s.hid, injectErrors: ['hid-read'] } }));
     await expect(
@@ -450,6 +488,53 @@ describe('mock HID error injection (#123)', () => {
     await expect(
       invoke('hid_send_feature_report', { reportId: 0x82, data: [1, 1, 1] })
     ).resolves.toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 13d — hid_connect/hid_disconnect lifecycle: the handlers' connected-flag
+// behavior (previously only exercised for transport derivation + injection).
+// ---------------------------------------------------------------------------
+
+describe('mock hid connect/disconnect lifecycle (13d)', () => {
+  beforeEach(() => resetMockState());
+
+  it('hid_connect sets connected and hid_disconnect clears it', async () => {
+    // Start disconnected so the connect actually flips the flag.
+    mockState.update((s) => ({ ...s, hid: { ...s.hid, connected: false } }));
+    await invoke('hid_connect', { vendorId: 0x054c, productId: 0x0ce6 });
+    expect(getMockState().hid.connected).toBe(true);
+    const poll = await invoke<{ connected: boolean; reports: unknown[] }>('hid_poll');
+    expect(poll.connected).toBe(true);
+    expect(poll.reports).toHaveLength(1);
+    const d = await invoke<{ connected: boolean; open_path: string | null }>('hid_diagnostics');
+    expect(d.connected).toBe(true);
+    expect(d.open_path).toBe('/dev/hidraw4');
+
+    await invoke('hid_disconnect');
+    expect(getMockState().hid.connected).toBe(false);
+    const off = await invoke<{ connected: boolean; reports: unknown[] }>('hid_poll');
+    expect(off.connected).toBe(false);
+    expect(off.reports).toHaveLength(0);
+    const d2 = await invoke<{ connected: boolean; open_path: string | null }>('hid_diagnostics');
+    expect(d2.connected).toBe(false);
+    expect(d2.open_path).toBeNull();
+  });
+
+  it('hid_disconnect while already disconnected is a no-op', async () => {
+    mockState.update((s) => ({ ...s, hid: { ...s.hid, connected: false } }));
+    await expect(invoke('hid_disconnect')).resolves.toBeUndefined();
+    expect(getMockState().hid.connected).toBe(false);
+  });
+
+  it('reconnecting flips back to true and re-derives the transport from the pid', async () => {
+    await invoke('hid_connect', { vendorId: 0x054c, productId: 0x0ce6 });
+    expect(getMockState().hid.simulateTransport).toBe('usb');
+    await invoke('hid_disconnect');
+    expect(getMockState().hid.connected).toBe(false);
+    await invoke('hid_connect', { vendorId: 0x054c, productId: 0x0df2 });
+    expect(getMockState().hid.connected).toBe(true);
+    expect(getMockState().hid.simulateTransport).toBe('bt');
   });
 });
 
@@ -530,6 +615,14 @@ describe('mock hid_diagnostics (#124)', () => {
     expect(d.write_count).toBe(0);
     expect(d.write_errors).toBe(0);
     expect(d.last_write_error).toBeNull();
+  });
+
+  it('reports dropped_reports 0 on repeated polls while connected (14a: no bounded queue)', async () => {
+    mockState.update((s) => ({ ...s, hid: { ...s.hid, connected: true } }));
+    await invoke('hid_poll');
+    await invoke('hid_poll');
+    const d = await invoke<{ dropped_reports: number }>('hid_diagnostics');
+    expect(d.dropped_reports).toBe(0);
   });
 });
 

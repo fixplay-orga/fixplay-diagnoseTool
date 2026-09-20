@@ -38,7 +38,7 @@
       );
       if (!mic) {
         deviceFound = false;
-        errorMsg = get(LL).mic.micNoDevice();
+        errorMsg = get(LL).tester.micNotFound();
         return;
       }
       deviceFound = true;
@@ -80,9 +80,9 @@
       tick();
     } catch (e) {
       if (e instanceof DOMException && e.name === 'NotAllowedError') {
-        errorMsg = get(LL).mic.micDenied();
+        errorMsg = get(LL).tester.micDenied();
       } else {
-        errorMsg = get(LL).mic.micError({ error: e instanceof Error ? e.message : String(e) });
+        errorMsg = get(LL).tester.micError({ error: e instanceof Error ? e.message : String(e) });
       }
     }
   }

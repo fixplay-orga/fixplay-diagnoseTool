@@ -144,7 +144,7 @@ export const ERROR_INJECTABLE: string[] = [
  * hardware-validation rehearsal). While armed, the corresponding mock handler
  * rejects with a Tauri-style string error:
  *
- *   - `hid-write`  → `hid_send_output_report`
+ *   - `hid-write`  → `hid_send_output_report` and `hid_send_feature_report`
  *   - `hid-connect`→ `hid_connect`
  *   - `hid-read`   → `hid_poll`
  *
@@ -179,7 +179,6 @@ export const mockHidRuntime: {
    * `hid-write` injection). */
   writeCount: number;
   writeErrors: number;
-  droppedReports: number;
   lastWriteError: string | null;
 } = {
   lastOutputReport: null,
@@ -187,14 +186,16 @@ export const mockHidRuntime: {
   btInputSeq: 0,
   writeCount: 0,
   writeErrors: 0,
-  droppedReports: 0,
   lastWriteError: null,
 };
 
 /**
  * Canned DS5 feature replies (#123): report id → staged reply buffer. The
  * mock `hid_send_feature_report` fills this from the real DS5 reply rules, and
- * `hid_receive_feature_report` drains it. Cleared by `resetMockState()`.
+ * `hid_receive_feature_report` reads it (replies are deliberately never
+ * deleted — repeated receives return the same staged buffer, idempotent by
+ * design, mirroring a device feature report that stays readable). Cleared by
+ * `resetMockState()`.
  */
 export const mockFeatureReplies = new Map<number, number[]>();
 
@@ -269,6 +270,24 @@ function defaultHidDevices(): HidDeviceInfo[] {
       path: '/dev/hidraw4',
     },
   ];
+}
+
+/**
+ * Next free mock HID device path: scan the live device list for
+ * `/dev/hidraw<N>` paths and return max(N) + 1 (floor 4 — the kernel's first
+ * DualSense hidraw, matching defaultHidDevices). Scanning the live paths —
+ * not a stored counter — keeps the result monotonic against removals: after
+ * [hidraw4, hidraw5] minus hidraw4, a length-based formula would re-emit
+ * hidraw5 and collide with the surviving device. Non-hidraw paths are
+ * ignored. Pure so it tests without the store.
+ */
+export function nextMockHidPath(devices: HidDeviceInfo[]): string {
+  let max = 4;
+  for (const d of devices) {
+    const m = /^\/dev\/hidraw(\d+)$/.exec(d.path);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `/dev/hidraw${max + 1}`;
 }
 
 export const DEFAULT_MOCK_STATE: MockState = {
@@ -411,7 +430,6 @@ export function resetMockState(): void {
   mockHidRuntime.btInputSeq = 0;
   mockHidRuntime.writeCount = 0;
   mockHidRuntime.writeErrors = 0;
-  mockHidRuntime.droppedReports = 0;
   mockHidRuntime.lastWriteError = null;
   mockFeatureReplies.clear();
 }

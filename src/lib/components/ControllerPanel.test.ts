@@ -347,9 +347,13 @@ describe('ControllerPanel connect flow via mock layer (deferred 2a/7b/14b/14c/14
   });
 
   it('pushes a German baseline-failed log entry on a failed baseline write (2a)', async () => {
+    // Command-level injection (#72) on the output-report command only: since
+    // deferred 13c the armed 'hid-write' transport injection ALSO rejects
+    // feature sends, which fails the connect's info read before the baseline
+    // write is ever attempted — this test pins the baseline log specifically.
     mockState.update((s) => ({
       ...s,
-      hid: { ...s.hid, injectErrors: ['hid-write'] },
+      errors: { hid_send_output_report: 'HID-Write fehlgeschlagen (injiziert)' },
     }));
     const mark = logMark();
     const unmount = await connectSingleDevice(0x0ce6);
