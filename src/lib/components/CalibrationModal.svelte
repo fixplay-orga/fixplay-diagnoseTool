@@ -116,7 +116,7 @@
     resetRangeSampling();
   }
 
-  async function runCenterCalibration() {
+  async function runCenterCalibration(run: number) {
     if (!manager) return;
     busy = true;
     error = null;
@@ -125,25 +125,41 @@
       statusText = get(LL).calibration.init();
       step = 1;
       await sleep(100);
+      if (run !== activeRun) return; // stale run — a newer run/close owns the UI
       await manager.calibrateSticksBegin();
       step = 2;
       statusText = get(LL).calibration.measureCenter({ n: 1 });
       await sleep(150);
+      if (run !== activeRun) return;
       await manager.calibrateSticksSample();
       step = 3;
       statusText = get(LL).calibration.measureCenter({ n: 2 });
       await sleep(150);
+      if (run !== activeRun) return;
       await manager.calibrateSticksSample();
       step = 4;
       statusText = get(LL).calibration.measureCenter({ n: 3 });
       await sleep(150);
+      if (run !== activeRun) return;
       await manager.calibrateSticksSample();
       step = 5;
       statusText = get(LL).calibration.save();
       await sleep(200);
+      // From here on close() no longer sends the End (its branch fires only
+      // while step < 5), so a stale bail inside the save phase must send it
+      // itself — best-effort — or the pad would stay in center mode (M3).
+      if (run !== activeRun) {
+        await manager.calibrateSticksEnd().catch(() => {});
+        return;
+      }
       await manager.calibrateSticksSample();
       await sleep(500);
+      if (run !== activeRun) {
+        await manager.calibrateSticksEnd().catch(() => {});
+        return;
+      }
       await manager.calibrateSticksEnd();
+      if (run !== activeRun) return; // close() raced in while the End was in flight
       step = 6;
       success = true;
       statusText = get(LL).calibration.centerDone();
@@ -151,14 +167,18 @@
       if (manager) {
         afterData = await manager.getInMemoryModuleData().catch(() => null);
       }
+      if (run !== activeRun) return; // closed while reading the module data
       onDone?.(true, get(LL).calibration.centerDoneShort());
     } catch (e) {
+      if (run !== activeRun) return; // stale run — a newer run/close owns the UI
       error = e instanceof Error ? e.message : String(e);
       statusText = get(LL).calibration.errorPrefix({ error });
       pushControllerLog(get(LL).calibration.centerFailedLog({ error }), 'error');
       onDone?.(false, error);
     } finally {
-      busy = false;
+      // Only the CURRENT run may release busy — a stale run must not clobber
+      // the newer run's busy (same rule as runRangeCalibration, #121 bug 1).
+      if (run === activeRun) busy = false;
     }
   }
 
@@ -198,6 +218,7 @@
 
   async function finishRangeCalibration() {
     if (!manager) return;
+    if (closing) return; // deferred 11a: close() owns the end report while it runs
     const run = activeRun; // started by start() — the token was taken there
     busy = true;
     try {
@@ -247,28 +268,43 @@
     if (run !== activeRun) return; // superseded by a newer start/close
     if (mode === 'center') {
       totalSteps = 6;
-      await runCenterCalibration();
+      await runCenterCalibration(run);
     } else {
       totalSteps = 4;
       await runRangeCalibration(run);
     }
   }
 
-  let closing = false;
+  // Reactive (deferred 11a): the Fertig button gates on it — during close()'s
+  // await window (busy was already released) a Fertig click must not fire a
+  // second end report.
+  let closing = $state(false);
   async function close() {
     if (closing) return; // double close (Escape + button) must not send a 2nd end
     closing = true;
     // Invalidate any in-flight run: its continuations must not write into the
     // (now closed) modal state.
     ++activeRun;
-    // #121 bug 2: aborting a range flow must tell the controller, otherwise it
-    // stays in range mode hardware-side. step < 3 means calibrateRangeEnd has
-    // not been sent yet (step 3 = end in flight, step 4 = done). Best effort:
-    // a failing feature report must not block closing the modal.
+    // #121 bug 2: aborting a flow must tell the controller, otherwise it stays
+    // in range/center mode hardware-side. step < 3 / step < 5 means the
+    // respective end report has not been sent yet (range step 3 = end in
+    // flight; center step 5 = save phase, end not yet in flight — the stale
+    // chain sends it there, see runCenterCalibration). Best effort: a failing
+    // feature report must not block closing the modal, and a wedged one must
+    // not block it forever (deferred 11b) — hence the 2 s race. The losing
+    // end promise gets its own no-op catch so its rejection can never be
+    // unhandled.
     if (manager && mode === 'range' && step >= 1 && step < 3 && !success) {
       busy = false;
       try {
-        await manager.calibrateRangeEnd();
+        await Promise.race([manager.calibrateRangeEnd().catch(() => {}), sleep(2000)]);
+      } catch {
+        /* Best effort — close regardless. */
+      }
+    } else if (manager && mode === 'center' && step >= 1 && step < 5 && !success) {
+      busy = false;
+      try {
+        await Promise.race([manager.calibrateSticksEnd().catch(() => {}), sleep(2000)]);
       } catch {
         /* Best effort — close regardless. */
       }
@@ -466,8 +502,9 @@
       <div class="flex justify-end gap-2">
         {#if mode === 'range' && step === 2 && !busy}
           <button
-            class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             onclick={finishRangeCalibration}
+            disabled={closing}
           >
             {$LL.calibration.done()}
           </button>

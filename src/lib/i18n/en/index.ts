@@ -528,6 +528,9 @@ const en: Translation = {
     diagDropped: 'Dropped reports',
     diagPath: 'Device path',
     diagLastWriteError: 'Last write error',
+    baselineFailedLog: 'Lightbar baseline failed: {error}',
+    modeStandard: 'Standard',
+    modeEdge: 'Edge',
   },
   calibration: {
     titleCenter: 'Stick Center Calibration',

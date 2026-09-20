@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-import { render, screen, act, fireEvent } from '@testing-library/svelte';
+import { render, screen, act, fireEvent, waitFor } from '@testing-library/svelte';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { get } from 'svelte/store';
 import CalibrationModal from './CalibrationModal.svelte';
 import { initI18n } from '$lib/i18n/init';
+import { controllerLog } from '$lib/stores/controller';
 
 /**
  * Tests for the before/after finetune comparison (#48). The modal auto-starts
@@ -179,7 +181,11 @@ describe('CalibrationModal range flow (#121)', () => {
     // Bug 2: close() used to drop the flow silently — the controller stayed
     // in range mode hardware-side.
     expect(manager.calibrateRangeEnd).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('button', { name: 'Fertig' })).toBeNull();
+    // The close-time end-send is now raced against a 2 s sleep (11b); its
+    // extra microtask hops delay the outro — waitFor absorbs the removal.
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Fertig' })).toBeNull()
+    );
   });
 
   it('ignores a stale range run when a new start overtakes it (#121)', async () => {
@@ -227,5 +233,130 @@ describe('CalibrationModal range flow (#121)', () => {
     await settle();
     expect(screen.getByRole('button', { name: 'Fertig' })).not.toBeDisabled();
     expect(manager.calibrateRangeEnd).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Deferred-minors wave: the closing gate (11a), the close-time end-send race
+ * (11b) and the center-mode run token + exactly-once end report (M3).
+ *
+ * These tests use fake timers (the close-time race parks on a 2 s sleep), so
+ * they get their own settle helper: two `advanceTimersByTimeAsync(0)` hops
+ * flush the auto-started flow's microtask chain and the effect scheduling.
+ */
+describe('CalibrationModal close-time guards (deferred 11a/11b/M3)', () => {
+  async function settleFake() {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+  }
+
+  it('disables Fertig while close() is sending the end report (11a)', async () => {
+    vi.useFakeTimers();
+    const manager = makeManager([], []);
+    // Park close()'s calibrateRangeEnd so its await window (busy released,
+    // modal still open) is observable.
+    manager.calibrateRangeEnd.mockImplementation(
+      () => new Promise<void>(() => {})
+    );
+    render(CalibrationModal, { props: { open: true, manager, initialMode: 'range' } });
+    await settleFake();
+    const done = screen.getByRole('button', { name: 'Fertig' });
+    expect(done).not.toBeDisabled();
+
+    // Start close(): activeRun bumped, busy released, end report in flight.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Abbrechen' }));
+    });
+    // Within the await window the Fertig button must be unusable — a click
+    // would fire a second calibrateRangeEnd (the 11a bug).
+    expect(done).toBeDisabled();
+    await act(async () => {
+      fireEvent.click(done);
+    });
+    expect(manager.calibrateRangeEnd).toHaveBeenCalledTimes(1);
+
+    // The 2 s race resolves the parked close() and the modal finishes closing.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(screen.queryByRole('button', { name: 'Fertig' })).toBeNull();
+  });
+
+  it('still closes when the end report never resolves (11b)', async () => {
+    vi.useFakeTimers();
+    const manager = makeManager([], []);
+    manager.calibrateRangeEnd.mockImplementation(
+      () => new Promise<void>(() => {})
+    );
+    render(CalibrationModal, { props: { open: true, manager, initialMode: 'range' } });
+    await settleFake();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Abbrechen' }));
+    });
+    // Pre-fix: close() awaited the end report unconditionally — a wedged
+    // feature report blocked `open = false` forever. The 2 s race must win.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(screen.queryByRole('button', { name: 'Fertig' })).toBeNull();
+    // Vitest fails the test on an unhandled rejection; the end promise's own
+    // no-op catch (in close()) keeps the never-resolving loser harmless.
+  });
+
+  it('sends calibrateSticksEnd exactly once when closed mid-center-flow (M3)', async () => {
+    vi.useFakeTimers();
+    const manager = makeManager([], []);
+    const onDone = vi.fn();
+    render(CalibrationModal, { props: { open: true, manager, onDone } });
+    const mark = get(controllerLog)[0]?.id ?? -1;
+    // Advance into step 2's measurement sleep (100 + 150 ms chain).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    // Escape mid-flow: close() sends the End best-effort (step 2 < 5).
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Escape' });
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    // Exactly once — close() sent it; the stale chain bails without a second.
+    expect(manager.calibrateSticksEnd).toHaveBeenCalledTimes(1);
+    // The stale chain must not report a completion (log or onDone) after the
+    // close invalidated its run token.
+    const pushed = get(controllerLog).filter((e) => e.id > mark);
+    expect(pushed.filter((e) => /abgeschlossen/i.test(e.message))).toHaveLength(0);
+    expect(onDone).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Abbrechen' })).toBeNull();
+  });
+
+  it('a close during the center save phase still ends the flow exactly once (M3)', async () => {
+    vi.useFakeTimers();
+    const manager = makeManager([], []);
+    const onDone = vi.fn();
+    render(CalibrationModal, { props: { open: true, manager, onDone } });
+    // Advance into the save phase (step 5): its sleep(200) is pending at t=600.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600);
+    });
+    // close() during step 5 does NOT send the End (branch fires only while
+    // step < 5) — the stale chain's save-phase bail must send it instead.
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Escape' });
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(manager.calibrateSticksEnd).toHaveBeenCalledTimes(1);
+    expect(onDone).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Abbrechen' })).toBeNull();
   });
 });

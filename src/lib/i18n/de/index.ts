@@ -539,6 +539,9 @@ const de: BaseTranslation = {
     diagDropped: 'Verworfene Reports',
     diagPath: 'Gerätepfad',
     diagLastWriteError: 'Letzter Write-Fehler',
+    baselineFailedLog: 'Lichtbar-Baseline fehlgeschlagen: {error}',
+    modeStandard: 'Standard',
+    modeEdge: 'Edge',
   },
   calibration: {
     titleCenter: 'Stick-Mittelkalibrierung',

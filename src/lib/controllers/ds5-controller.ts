@@ -366,7 +366,11 @@ export class DS5Controller extends BaseController {
       await this.sendOutputReport(outputStruct.pack(), 'init default states');
       this.updateCurrentOutputState(outputStruct);
     } catch (error) {
+      // Still non-fatal at the call site, but the error must reach it so the
+      // panel can push its baselineFailedLog entry (deferred 2a) — swallowing
+      // it here left the baseline failure invisible in the controller log.
       console.warn('Failed to initialize DS5 output state:', error);
+      throw error;
     }
   }
 

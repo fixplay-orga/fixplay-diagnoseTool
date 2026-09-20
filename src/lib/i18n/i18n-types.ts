@@ -1927,6 +1927,19 @@ type RootTranslation = {
 		 * L​e​t​z​t​e​r​ ​W​r​i​t​e​-​F​e​h​l​e​r
 		 */
 		diagLastWriteError: string
+		/**
+		 * L​i​c​h​t​b​a​r​-​B​a​s​e​l​i​n​e​ ​f​e​h​l​g​e​s​c​h​l​a​g​e​n​:​ ​{​e​r​r​o​r​}
+		 * @param {unknown} error
+		 */
+		baselineFailedLog: RequiredParams<'error'>
+		/**
+		 * S​t​a​n​d​a​r​d
+		 */
+		modeStandard: string
+		/**
+		 * E​d​g​e
+		 */
+		modeEdge: string
 	}
 	calibration: {
 		/**
@@ -5326,6 +5339,18 @@ export type TranslationFunctions = {
 		 * Letzter Write-Fehler
 		 */
 		diagLastWriteError: () => LocalizedString
+		/**
+		 * Lichtbar-Baseline fehlgeschlagen: {error}
+		 */
+		baselineFailedLog: (arg: { error: unknown }) => LocalizedString
+		/**
+		 * Standard
+		 */
+		modeStandard: () => LocalizedString
+		/**
+		 * Edge
+		 */
+		modeEdge: () => LocalizedString
 	}
 	calibration: {
 		/**

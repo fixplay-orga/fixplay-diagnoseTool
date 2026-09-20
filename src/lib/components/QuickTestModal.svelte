@@ -124,6 +124,15 @@
   // clobber the status of a newer run once the modal was closed or another
   // test started.
   let actuatorToken = 0;
+  // The lights chain runs on its own interval, outside the actuatorToken
+  // awaits — a generation counter (same pattern) so a stale tick of a replaced
+  // run can neither kill a newer run's interval nor flip its row/verdict, and
+  // a stale stopLightsTest writes nothing (deferred 9a).
+  let lightsGeneration = 0;
+  // The mic chain's 500 ms continuation: a replaced run must unmount the level
+  // meter (MicLevelMeter only stops its getUserMedia stream on unmount /
+  // active=false), otherwise the DualSense capture stream stays open (N2).
+  let micGeneration = 0;
 
   /** Best-effort reset of every physical actuator: motors, triggers, lights,
    *  speaker. Used by close() and onDestroy so nothing keeps running on the
@@ -221,6 +230,11 @@
     if (buttonsResolve) {
       const resolve = buttonsResolve;
       buttonsResolve = null;
+      // The aborted run had no verdict — reset the row so runTest's
+      // post-await gate (and the Play button) sees 'idle', not a stuck
+      // 'running' (deferred 9b). A newer run re-sets it synchronously after
+      // this call returns, so the ordering is safe.
+      statuses.buttons = 'idle';
       resolve();
     }
   }
@@ -329,6 +343,10 @@
             // of the current run (or of a newer test).
             if (token !== actuatorToken) return;
             statuses[id] = r.success ? 'pass' : 'fail';
+            // setSpeakerTone resolves while the tone is still playing (the
+            // verdict only exists once the doneCb fires) — so the 'completed'
+            // entry belongs here, not in the generic post-switch log (9b).
+            pushControllerLog(get(LL).quickTest.testCompletedLog({ id }), 'info');
           });
           break;
         case 'buttons':
@@ -337,11 +355,21 @@
         case 'bt':
           await runBtTest();
           break;
-        case 'microphone':
+        case 'microphone': {
+          const micGen = ++micGeneration;
           micActive = true;
           // Wait 500ms for the mic level meter to stabilise, then check presence
           await new Promise((r) => setTimeout(r, 500));
-          if (stale()) return; // a stale verdict must not clobber a newer run
+          if (micGen !== micGeneration || stale()) {
+            // A replaced run (a newer test started, or the modal closed) must
+            // unmount the level meter and un-stick the row — the meter only
+            // stops its getUserMedia stream when it stops rendering, so
+            // leaving the row 'running' kept the capture stream open (N2).
+            // After close() the statuses are already idle, making this a no-op.
+            micActive = false;
+            if (statuses.microphone === 'running') statuses.microphone = 'idle';
+            return;
+          }
           if ($micConnected) {
             statuses[id] = 'pass';
             pushControllerLog(get(LL).quickTest.micDetectedLog(), 'info');
@@ -349,13 +377,26 @@
             statuses[id] = 'fail';
             pushControllerLog(get(LL).quickTest.micNotDetectedLog(), 'error');
           }
+          micActive = false; // verdict rendered — the meter unmounts with the row
           break;
+        }
       }
       // 'lights' logs its own 'completed' entry once the verdict exists
       // (stopLightsTest / interval error) — startLightsTest returns
       // immediately while the test is still cycling, so the generic entry
-      // would fire at start with no verdict (#122).
-      if (id !== 'lights') {
+      // would fire at start with no verdict (#122). 'speaker' logs from its
+      // doneCb (see above). An aborted run (close(), or a buttons abort that
+      // reset the row) has no verdict and must not log (deferred 9b) — it is
+      // gated by `stale()` plus the verdict allowlist (pass/fail = the row
+      // holds a finished verdict; 'idle'/'running' would mean aborted or
+      // still cycling).
+      const finalStatus: TestStatus = statuses[id];
+      if (
+        id !== 'lights' &&
+        id !== 'speaker' &&
+        !stale() &&
+        (finalStatus === 'pass' || finalStatus === 'fail')
+      ) {
         pushControllerLog(get(LL).quickTest.testCompletedLog({ id }), 'info');
       }
     } catch (e) {
@@ -376,6 +417,12 @@
 
   async function startLightsTest() {
     if (!manager) return;
+    // Generation token of this run (deferred 9a): the interval callback and
+    // the error path compare against it so a stale tick of a replaced run
+    // neither kills a newer run's interval nor touches its row. The manager
+    // is captured too — close() can null the prop while a tick is in flight.
+    const gen = ++lightsGeneration;
+    const lightsManager = manager;
     const colors = [
       { r: 255, g: 0, b: 0 },
       { r: 0, g: 255, b: 0 },
@@ -385,22 +432,38 @@
     let ci = 0;
     let pi = 0;
     lightsTestFailed = false;
-    await manager.setMuteLed(2);
+    await lightsManager.setMuteLed(2);
+    // A newer run (or close()) may have taken over while the mute-LED write
+    // was in flight — don't start a second interval over its fresh one.
+    if (gen !== lightsGeneration) return;
     lightsInterval = setInterval(async () => {
+      // Stale tick of a replaced run: bail before touching anything — in
+      // particular before clearInterval, which would kill the newer run's
+      // freshly started interval (deferred 9a).
+      if (gen !== lightsGeneration) return;
       try {
-        await manager!.setLightbarColor(colors[ci].r, colors[ci].g, colors[ci].b);
-        await manager!.setPlayerIndicator(patterns[pi]);
+        await lightsManager.setLightbarColor(colors[ci].r, colors[ci].g, colors[ci].b);
+        await lightsManager.setPlayerIndicator(patterns[pi]);
         pi = (pi + 1) % patterns.length;
         if (pi === 0) ci = (ci + 1) % colors.length;
       } catch (e) {
         // A real HID write failure (e.g. controller gone) must surface as a
         // failed test — previously this was swallowed and the test reported
         // "pass" with the lights not actually changing.
+        if (gen !== lightsGeneration) return; // newer run owns the row
         lightsTestFailed = true;
         if (lightsInterval) {
           clearInterval(lightsInterval);
           lightsInterval = null;
         }
+        // Best-effort pad reset (deferred 12c): the last lightbar color and
+        // the mute LED set at start must not linger now that the test is
+        // over — the Stop path gets the same via stopLightsTest's
+        // resetLights(). A failing reset must not mask the original error.
+        await lightsManager.resetLights().catch(() => {});
+        // A newer run may have started while the reset was in flight — its
+        // 'running' row and verdict must not be overwritten (deferred 9a).
+        if (gen !== lightsGeneration) return;
         statuses.lights = 'fail';
         pushControllerLog(
           get(LL).quickTest.lightsFailedLog({ error: e instanceof Error ? e.message : String(e) }),
@@ -414,6 +477,9 @@
   }
 
   async function stopLightsTest() {
+    // Bumping the generation invalidates the just-cleared interval's pending
+    // tick: its catch must not touch this run's verdict (deferred 9a).
+    const gen = ++lightsGeneration;
     if (lightsInterval) {
       clearInterval(lightsInterval);
       lightsInterval = null;
@@ -432,6 +498,9 @@
         );
       }
     }
+    // A newer run started while the reset was in flight — it owns the row now
+    // and its own stopLightsTest writes the verdict (deferred 9a).
+    if (gen !== lightsGeneration) return;
     statuses.lights = lightsTestFailed ? 'fail' : 'pass';
     // The verdict only exists here — log the completed entry with it (#122).
     pushControllerLog(
@@ -448,9 +517,12 @@
     abortButtonsTest();
     abortBtTest();
     missingButtons = [];
-    // Invalidate in-flight continuations (stale speaker doneCb), then silence
-    // every actuator — same reset the unmount path uses (#122).
+    // Invalidate in-flight continuations (stale speaker doneCb, lights
+    // interval ticks, mic 500 ms continuation), then silence every actuator —
+    // same reset the unmount path uses (#122).
     actuatorToken++;
+    lightsGeneration++;
+    micGeneration++;
     resetActuators();
     micActive = false;
     btVerdict = null;
@@ -478,6 +550,8 @@
       lightsInterval = null;
     }
     actuatorToken++;
+    lightsGeneration++;
+    micGeneration++;
     resetActuators();
   });
 

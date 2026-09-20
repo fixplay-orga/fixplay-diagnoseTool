@@ -24,6 +24,7 @@
     Undo2,
   } from 'lucide-svelte';
   import { copyToClipboard } from '$lib/utils/clipboard';
+  import { trapFocus } from '$lib/utils/focusTrap';
   import { save as saveDialog } from '@tauri-apps/plugin-dialog';
   import { saveTextFile } from '$lib/api/tauri';
   import {
@@ -93,6 +94,11 @@
   // Device picker: shown when several DualSenses (USB/BT) are listed at once.
   let pickerOpen = $state(false);
   let pickerDevices = $state<HidDeviceInfo[]>([]);
+  // Model variant of the connected device (mode badge in the status row):
+  // captured from the picked device object at connect. 0x0e5f = DualSense
+  // Edge, 0x0ce6 = Standard (USB), 0x0df2 = BT (model not identifiable from
+  // the pid) — null = unknown/no badge.
+  let controllerPid = $state<number | null>(null);
   let fwVersion = $state<string>('—');
   let macAddress = $state<string>('—');
   let copied = $state<string | null>(null);
@@ -177,6 +183,9 @@
     } catch (e) {
       connectError = e instanceof Error ? e.message : String(e);
       pushControllerLog(get(LL).controller.connectFailedLog({ error: connectError }), 'error');
+      // A failed connect attempt must not leave a stale 'bt' in the transport
+      // store for the next session's BT feature-gates (deferred 14f).
+      controllerTransport.set('usb');
     } finally {
       connecting = false;
     }
@@ -186,6 +195,9 @@
     connecting = true;
     connectError = null;
     pickerOpen = false;
+    // Model variant for the status-row mode badge — straight from the picked
+    // device object (0x0e5f Edge / 0x0ce6 Standard / 0x0df2 BT → no badge).
+    controllerPid = info.product_id;
     try {
       const device = await hidConnect(info.vendor_id, info.product_id, info.path || undefined);
       const ctrl = createControllerForDevice(device);
@@ -242,9 +254,20 @@
       fwVersion = devInfo.infoItems?.find((i) => i.key === 'FW Version')?.value ?? '—';
       macAddress = devInfo.infoItems?.find((i) => i.key === 'Bluetooth Address')?.value ?? '—';
       // Lightbar-Baseline: hebt den Kernel-LIGHT_OUT-Zustand auf und bestätigt mit
-      // einem blauen Lichtblitz, dass Writes ankommen. Nicht fatal bei Fehlern.
+      // einem blauen Lichtblitz, dass Writes ankommen. Nicht fatal bei Fehlern —
+      // aber sichtbar im Controller-Log (deferred 2a), sonst verschluckt
+      // initializeCurrentOutputState den Fehler still.
       if (ctrl instanceof DS5Controller) {
-        await ctrl.initializeCurrentOutputState();
+        try {
+          await ctrl.initializeCurrentOutputState();
+        } catch (e) {
+          pushControllerLog(
+            get(LL).controller.baselineFailedLog({
+              error: e instanceof Error ? e.message : String(e),
+            }),
+            'error'
+          );
+        }
       }
       pushControllerLog(get(LL).controller.connectedLog({ model: ctrl.getModel() }), 'info');
       // Snapshot the in-memory finetune data so "Verwerfen" can undo calibration
@@ -269,6 +292,11 @@
     }
     controllerTransport.set('usb');
     calibSnapshot = null;
+    controllerPid = null;
+    // HID diagnostics are per-connection counters (deferred 14b): without the
+    // reset the previous session's write counters lingered in the block until
+    // the next 2 s poll repopulated them.
+    diag = null;
     controllerConnected.set(false);
     controllerModel.set(null);
     controllerInfo.set(null);
@@ -365,6 +393,14 @@
   });
 </script>
 
+<!-- Device picker closes on Escape like every other modal (deferred 7b);
+     focus handling comes from the shared trapFocus action. -->
+<svelte:window
+  onkeydown={(e) => {
+    if (pickerOpen && e.key === 'Escape') pickerOpen = false;
+  }}
+/>
+
 <div class="flex h-full flex-col gap-4 p-4 overflow-y-auto">
   <!-- Header -->
   <div class="flex items-center justify-between">
@@ -407,7 +443,7 @@
       role="dialog"
       aria-modal="true"
     >
-      <div class="w-full max-w-md rounded-2xl bg-gray-900 p-5 shadow-2xl">
+      <div class="w-full max-w-md rounded-2xl bg-gray-900 p-5 shadow-2xl" use:trapFocus>
         <h2 class="mb-3 text-lg font-semibold text-gray-100">{$LL.controller.pickerTitle()}</h2>
         <div class="flex flex-col gap-2">
           {#each pickerDevices as dev (dev.path)}
@@ -482,6 +518,17 @@
         {/if}
         {$batteryStatus.bat_txt || '—'}
       </span>
+      {#if controllerPid !== null && controllerPid !== 0x0df2}
+        <!-- Model variant badge: 0x0e5f = DualSense Edge, else (USB pid
+             0x0ce6) = Standard. Over BT (0x0df2) the pid says nothing about
+             the model, so no badge is shown. -->
+        <span
+          class="flex items-center gap-1 rounded bg-gray-800 px-2 py-0.5 text-xs text-gray-200"
+          data-testid="mode-badge"
+        >
+          {controllerPid === 0x0e5f ? $LL.controller.modeEdge() : $LL.controller.modeStandard()}
+        </span>
+      {/if}
       {#if $micConnected}
         <span
           class="flex items-center gap-1 rounded bg-gray-800 px-2 py-0.5 text-xs text-gray-200"
@@ -508,8 +555,11 @@
         <div class="text-xs text-gray-500">{$LL.controller.model()}</div>
         <div class="text-sm font-medium text-gray-200">{$controllerModel ?? '—'}</div>
       </div>
-      <div class="rounded-lg bg-gray-800/60 p-3" title={$LL.controller.batteryTitle()}>
+      <div class="rounded-lg bg-gray-800/60 p-3">
         <div class="text-xs text-gray-500">{$LL.controller.battery()}</div>
+        <!-- Only the inner value keeps a title: the error-state distinction
+             lives here, so a card-level duplicate tooltip is redundant
+             (deferred 4c). -->
         <div
           class="flex items-center gap-1.5 text-sm font-medium {$batteryStatus.is_error
             ? 'text-red-400'
@@ -819,27 +869,30 @@
         {$LL.controller.copiedToast({ label: copied })}
       </div>
     {/if}
-
-    <!-- HID diagnostics block (#124): collapsible, 2 s poll only while open. -->
-    <details
-      class="rounded-xl bg-gray-900/60 px-3 py-2 text-xs text-gray-400"
-      data-testid="hid-diagnostics"
-      bind:open={diagOpen}
-    >
-      <summary class="cursor-pointer select-none">{$LL.controller.diagnosticsTitle()}</summary>
-      <div class="mt-2 grid grid-cols-2 gap-1">
-        <span>{$LL.controller.diagWrites()}: {diag?.write_count ?? 0}</span>
-        <span>{$LL.controller.diagWriteErrors()}: {diag?.write_errors ?? 0}</span>
-        <span>{$LL.controller.diagDropped()}: {diag?.dropped_reports ?? 0}</span>
-        <span class="truncate">{$LL.controller.diagPath()}: {diag?.open_path ?? '—'}</span>
-        {#if diag?.last_write_error}
-          <span class="col-span-2 text-red-300"
-            >{$LL.controller.diagLastWriteError()}: {diag.last_write_error}</span
-          >
-        {/if}
-      </div>
-    </details>
   {/if}
+
+  <!-- HID diagnostics block (#124): collapsible, 2 s poll only while open.
+       Rendered OUTSIDE the connected branch (deferred 14c) so the block — and
+       a failed connect attempt's write counters — stay visible while
+       disconnected; the 2 s poll already only runs while the block is open. -->
+  <details
+    class="rounded-xl bg-gray-900/60 px-3 py-2 text-xs text-gray-400"
+    data-testid="hid-diagnostics"
+    bind:open={diagOpen}
+  >
+    <summary class="cursor-pointer select-none">{$LL.controller.diagnosticsTitle()}</summary>
+    <div class="mt-2 grid grid-cols-2 gap-1">
+      <span>{$LL.controller.diagWrites()}: {diag?.write_count ?? 0}</span>
+      <span>{$LL.controller.diagWriteErrors()}: {diag?.write_errors ?? 0}</span>
+      <span>{$LL.controller.diagDropped()}: {diag?.dropped_reports ?? 0}</span>
+      <span class="truncate">{$LL.controller.diagPath()}: {diag?.open_path ?? '—'}</span>
+      {#if diag?.last_write_error}
+        <span class="col-span-2 text-red-300"
+          >{$LL.controller.diagLastWriteError()}: {diag.last_write_error}</span
+        >
+      {/if}
+    </div>
+  </details>
 </div>
 
 <CalibrationModal bind:open={calibOpen} {manager} />

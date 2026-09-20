@@ -72,7 +72,9 @@ export function loadStickDeadzonePercent(): number {
     if (typeof localStorage === 'undefined') return 0; // SSR safety
     const raw = localStorage.getItem(STICK_DEADZONE_KEY);
     if (raw === null) return 0;
-    const pct = Number(raw);
+    // Round persisted fractional percents ('7.5' from older versions) to an
+    // integer so the slider round-trips cleanly (deferred 14e).
+    const pct = Math.round(Number(raw));
     if (Number.isFinite(pct)) {
       return Math.min(STICK_DEADZONE_MAX_PCT, Math.max(0, pct));
     }
