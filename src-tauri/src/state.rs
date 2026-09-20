@@ -76,6 +76,10 @@ pub struct HidShared {
     pub last_write_error: Mutex<Option<String>>,
     /// OS device path the connection was opened with (device picker, #117).
     pub open_path:        Mutex<Option<String>>,
+    /// Serializes hid_connect against hid_disconnect and itself — both
+    /// spawn_blocking closures take this as their first lock; the reader
+    /// thread and the read-only hid_poll/hid_diagnostics never do.
+    pub op_lock:          Mutex<()>,
 }
 
 impl Default for HidShared {
@@ -91,6 +95,7 @@ impl Default for HidShared {
             write_errors:     AtomicU64::new(0),
             last_write_error: Mutex::new(None),
             open_path:        Mutex::new(None),
+            op_lock:          Mutex::new(()),
         }
     }
 }

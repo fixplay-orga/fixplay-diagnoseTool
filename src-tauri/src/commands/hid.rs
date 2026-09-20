@@ -244,24 +244,43 @@ macro_rules! send_cmd {
 // ── Tauri commands ───────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn hid_list_devices() -> Result<Vec<HidDeviceInfo>, String> {
-    let api  = HidApi::new().map_err(|e| e.to_string())?;
-    let list = api
-        .device_list()
-        .map(|d| HidDeviceInfo {
-            vendor_id:     d.vendor_id(),
-            product_id:    d.product_id(),
-            manufacturer:  d.manufacturer_string().map(str::to_string),
-            product:       d.product_string().map(str::to_string),
-            serial_number: d.serial_number().map(str::to_string),
-            usage_page:    d.usage_page(),
-            usage:         d.usage(),
-            // `path()` is `&CStr` in hidapi 2.x — lossy conversion is safe here
-            // (paths are ASCII device nodes; a non-UTF8 byte just becomes U+FFFD).
-            path:          d.path().to_string_lossy().into_owned(),
-        })
-        .collect();
-    Ok(list)
+pub async fn hid_list_devices() -> Result<Vec<HidDeviceInfo>, String> {
+    // HidApi::new() + device_list() block (USB/udev enumeration) — same
+    // sync-hardware/async-command pattern as hid_connect, off the async runner.
+    tokio::task::spawn_blocking(move || {
+        let api  = HidApi::new().map_err(|e| e.to_string())?;
+        let list = api
+            .device_list()
+            .map(|d| HidDeviceInfo {
+                vendor_id:     d.vendor_id(),
+                product_id:    d.product_id(),
+                manufacturer:  d.manufacturer_string().map(str::to_string),
+                product:       d.product_string().map(str::to_string),
+                serial_number: d.serial_number().map(str::to_string),
+                usage_page:    d.usage_page(),
+                usage:         d.usage(),
+                // `path()` is `&CStr` in hidapi 2.x — lossy conversion is safe here
+                // (paths are ASCII device nodes; a non-UTF8 byte just becomes U+FFFD).
+                path:          d.path().to_string_lossy().into_owned(),
+            })
+            .collect();
+        Ok(list)
+    })
+    .await
+    .map_err(|e| format!("HID-Aufgabe fehlgeschlagen: {e}"))?
+}
+
+/// Policy for which OS path `HidDiagnostics.open_path` reports after a connect
+/// (M4, unit-testable): the device actually opened wins when hidapi can name it
+/// (`get_device_info`); otherwise the requested path is only kept when the open
+/// itself went through `open_path` — on the VID/PID fallback the requested path
+/// may name a *different* device than the one now held, so nothing is recorded.
+fn record_open_path(
+    requested:        Option<&str>,
+    actual:           Option<String>,
+    opened_via_path:  bool,
+) -> Option<String> {
+    actual.or_else(|| if opened_via_path { requested.map(str::to_string) } else { None })
 }
 
 /// Stop the reader thread and join it. Called AFTER a successful open of the
@@ -274,7 +293,13 @@ fn teardown_hid(hid: &HidShared) {
     if let Some(s) = hid.stop.lock().unwrap().take() {
         s.store(true, Ordering::Relaxed);
     }
-    if let Some(h) = hid.thread.lock().unwrap().take() {
+    // Take the handle into a local first so the thread-mutex guard is dropped
+    // BEFORE join() — in Rust 2021 the if-let scrutinee temporary would hold
+    // the lock across the whole statement, stalling a concurrent teardown for
+    // the entire join duration (6b). Only one teardown ever gets Some(handle),
+    // so no double-join is possible.
+    let handle = hid.thread.lock().unwrap().take();
+    if let Some(h) = handle {
         let _ = h.join();
     }
     hid.alive.lock().unwrap().take();
@@ -288,27 +313,40 @@ pub async fn hid_connect(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let hid = Arc::clone(&state.hid);
-    // Arc-Clone statt State-Borrow: spawn_blocking braucht 'static.
-    // HidApi::new() + open() blockieren — nicht auf dem Async-Runner laufen lassen.
+    // Arc clone instead of a State borrow: spawn_blocking needs 'static.
+    // HidApi::new() + open() block — don't run them on the async runtime.
     tokio::task::spawn_blocking(move || {
+        // Serialize connect against disconnect and itself (6c): without this a
+        // disconnect could interleave between the open and the thread install
+        // (or kill the freshly installed thread). Held across open + teardown
+        // join — safe because only these two closures ever take it.
+        let _op_guard = hid.op_lock.lock().unwrap();
         // 1. Open FIRST — a failed open must not destroy a working connection.
         let api = HidApi::new().map_err(|e| e.to_string())?;
         // Path-based open (path from hid_list_devices) with VID/PID fallback —
         // the path can vanish between listing and open (device replugged, other
-        // panel claimed it). hidapi 2.x's open_path takes a `&CStr`.
-        let device = match &path {
+        // panel claimed it). hidapi 2.x's open_path takes a `&CStr`. The
+        // fallback opens a possibly *different* device than the requested path.
+        let (device, opened_via_path) = match &path {
             Some(p) => {
                 let cpath = CString::new(p.as_str())
                     .map_err(|_| "Ungültiger HID-Gerätepfad".to_string())?;
-                api.open_path(&cpath)
-                    .or_else(|_| api.open(vendor_id, product_id))
-                    .map_err(|e| e.to_string())?
+                match api.open_path(&cpath) {
+                    Ok(d) => (d, true),
+                    Err(_) => (api.open(vendor_id, product_id).map_err(|e| e.to_string())?, false),
+                }
             }
-            None => api.open(vendor_id, product_id).map_err(|e| e.to_string())?,
+            None => (api.open(vendor_id, product_id).map_err(|e| e.to_string())?, false),
         };
-        // Only after a successful open: record which path is now held
-        // (HidDiagnostics reports it; a failed open keeps the previous value).
-        *hid.open_path.lock().unwrap() = path.clone();
+        // Only after a successful open: record which path is actually held
+        // (M4 — the VID/PID fallback may name another device than the failed
+        // requested path; a failed open keeps the previous value).
+        let actual = device
+            .get_device_info()
+            .ok()
+            .map(|i| i.path().to_string_lossy().into_owned());
+        *hid.open_path.lock().unwrap() =
+            record_open_path(path.as_deref(), actual, opened_via_path);
         // 2. Only now tear down the previous reader thread (and join it).
         teardown_hid(&hid);
         let (cmd_tx, cmd_rx) = mpsc::sync_channel::<HidCmd>(32);
@@ -339,8 +377,11 @@ pub async fn hid_connect(
 #[tauri::command]
 pub async fn hid_disconnect(state: State<'_, AppState>) -> Result<(), String> {
     let hid = Arc::clone(&state.hid);
-    // Arc-Clone statt State-Borrow: spawn_blocking braucht 'static.
+    // Arc clone instead of a State borrow: spawn_blocking needs 'static.
     tokio::task::spawn_blocking(move || {
+        // Serialize disconnect against connect and itself (6c) — teardown +
+        // path-clear must not interleave with a concurrent connect's open.
+        let _op_guard = hid.op_lock.lock().unwrap();
         teardown_hid(&hid);
         hid.reports.lock().unwrap().clear();
         // Nothing is open anymore — HidDiagnostics must not report a stale path.
@@ -365,7 +406,7 @@ pub async fn hid_send_feature_report(
         ));
     }
     let hid = Arc::clone(&state.hid);
-    // Arc-Clone statt State-Borrow: spawn_blocking braucht 'static.
+    // Arc clone instead of a State borrow: spawn_blocking needs 'static.
     tokio::task::spawn_blocking(move || {
         send_cmd!(hid.cmd_tx, |reply| HidCmd::SendFeatureReport(report_id, data, reply))
     })
@@ -383,7 +424,7 @@ pub async fn hid_receive_feature_report(
         return Err(format!("Feature-Report-Länge {} überschreitet Maximum 512", length));
     }
     let hid = Arc::clone(&state.hid);
-    // Arc-Clone statt State-Borrow: spawn_blocking braucht 'static.
+    // Arc clone instead of a State borrow: spawn_blocking needs 'static.
     tokio::task::spawn_blocking(move || {
         send_cmd!(hid.cmd_tx, |reply| HidCmd::GetFeatureReport(report_id, length, reply))
     })
@@ -397,7 +438,7 @@ pub async fn hid_send_output_report(
     state: State<'_, AppState>,
 ) -> Result<usize, String> {
     let hid = Arc::clone(&state.hid);
-    // Arc-Clone statt State-Borrow: spawn_blocking braucht 'static.
+    // Arc clone instead of a State borrow: spawn_blocking needs 'static.
     tokio::task::spawn_blocking(move || {
         send_cmd!(hid.cmd_tx, |reply| HidCmd::WriteOutput(data, reply))
     })
@@ -436,11 +477,20 @@ pub fn hid_poll(state: State<'_, AppState>) -> HidPollResult {
 /// repair-context diagnose block (#124). Pure state read — sync is fine.
 #[derive(Serialize)]
 pub struct HidDiagnostics {
+    /// Reader thread alive AND command channel installed (same rule as
+    /// `hid_poll` — a dead thread with a stale channel is not connected).
     pub connected:        bool,
+    /// OS device path the connection was actually opened with (`get_device_info`
+    /// after the open, M4) — `null` after disconnect, never a failed/other path.
     pub open_path:        Option<String>,
+    /// Successful output writes (byte-count verified via `check_write_result`).
     pub write_count:      u64,
+    /// Failed output writes — partial write or hidapi error.
     pub write_errors:     u64,
+    /// Input reports dropped at the `MAX_REPORT_QUEUE` cap, drained by the last
+    /// `hid_poll`.
     pub dropped_reports:  u64,
+    /// Last German write-error message (frontend-rendered), if any.
     pub last_write_error: Option<String>,
 }
 
@@ -581,5 +631,71 @@ mod tests {
         assert_eq!(read_error_backoff_ms(1), 10);
         assert_eq!(read_error_backoff_ms(2), 20);
         assert_eq!(read_error_backoff_ms(10), 50); // cap
+    }
+
+    // ── M4: record_open_path policy ─────────────────────────────────────────
+
+    #[test]
+    fn record_open_path_actual_wins_over_requested() {
+        assert_eq!(
+            record_open_path(Some("/dev/hidraw4"), Some("/dev/hidraw5".into()), true),
+            Some("/dev/hidraw5".to_string())
+        );
+    }
+
+    #[test]
+    fn record_open_path_keeps_requested_when_opened_via_path() {
+        assert_eq!(
+            record_open_path(Some("/dev/hidraw4"), None, true),
+            Some("/dev/hidraw4".to_string())
+        );
+    }
+
+    #[test]
+    fn record_open_path_none_on_fallback_with_unknown_actual() {
+        // VID/PID fallback succeeded on a possibly different device — reporting
+        // the failed requested path would be dishonest, nothing is recorded.
+        assert_eq!(record_open_path(Some("/dev/hidraw4"), None, false), None);
+    }
+
+    #[test]
+    fn record_open_path_actual_wins_without_requested() {
+        assert_eq!(
+            record_open_path(None, Some("/dev/hidraw3".into()), false),
+            Some("/dev/hidraw3".to_string())
+        );
+    }
+
+    #[test]
+    fn record_open_path_both_unknown_is_none() {
+        assert_eq!(record_open_path(None, None, false), None);
+        assert_eq!(record_open_path(None, None, true), None);
+    }
+
+    // ── 6b: teardown_hid drops the thread guard before join ─────────────────
+
+    #[test]
+    fn teardown_hid_joins_thread_and_clears_state() {
+        let hid = HidShared::default();
+        let (cmd_tx, cmd_rx) = mpsc::sync_channel::<HidCmd>(32);
+        // Keep the receiver alive so the Stop send buffers instead of erroring.
+        let _keep_rx = cmd_rx;
+        *hid.cmd_tx.lock().unwrap() = Some(cmd_tx);
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        hid.stop.lock().unwrap().replace(Arc::clone(&stop_flag));
+        hid.alive.lock().unwrap().replace(Arc::new(AtomicBool::new(true)));
+        let handle = std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        });
+        hid.thread.lock().unwrap().replace(handle);
+
+        teardown_hid(&hid); // must return — the join completes (no lock held across it)
+
+        assert!(hid.alive.lock().unwrap().is_none());
+        assert!(hid.thread.lock().unwrap().is_none());
+        assert!(hid.cmd_tx.lock().unwrap().is_none());
+        // The stop flag was consumed from its slot and flipped:
+        assert!(hid.stop.lock().unwrap().is_none());
+        assert!(stop_flag.load(Ordering::Relaxed));
     }
 }
