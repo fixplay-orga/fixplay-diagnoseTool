@@ -56,4 +56,22 @@ describe('BT input CRC (#118, C1)', () => {
       frame[73] | (frame[74] << 8) | (frame[75] << 16) | ((frame[76] << 24) >>> 0);
     expect(crc32(wire.subarray(0, 74), [0xa1])).toBe(trailer >>> 0);
   });
+
+  it('throws RangeError for frames shorter than 5 bytes instead of corrupting the head', () => {
+    // Pre-fix, end = length - 4 went negative and the trailer writes landed on
+    // real head bytes (length 3 overwrites bytes 0-2 with CRC bytes 1-3, …).
+    for (const len of [0, 1, 2, 3, 4]) {
+      const frame = new Uint8Array(len);
+      frame[0] = 0x40; // observable pre-fix corruption marker
+      expect(() => fillBtInputCrc(frame)).toThrow(RangeError);
+    }
+    // First clean length: 5 bytes → CRC at 1..4, byte 0 untouched.
+    const frame = new Uint8Array(5);
+    frame[0] = 0x40;
+    fillBtInputCrc(frame);
+    const expected = crc32(frame.subarray(0, 1), [0xa1, 0x31]);
+    const got = frame[1] | (frame[2] << 8) | (frame[3] << 16) | (frame[4] << 24);
+    expect(got >>> 0).toBe(expected);
+    expect(frame[0]).toBe(0x40);
+  });
 });

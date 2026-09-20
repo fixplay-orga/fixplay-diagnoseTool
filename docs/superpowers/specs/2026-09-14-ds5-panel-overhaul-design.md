@@ -120,8 +120,11 @@ PIDs: USB `0x054c:0x0ce6` (Standard), `0x054c:0x0e5f` (Edge, neu), BT `0x054c:0x
   (LIGHT_OUT = 0x02, light-on = 0x00). Wird vom „Reset"-Pfad und beim Connect aufgerufen → kann den
   Kernel-„aus"-Zustand zuverlässig aufheben. Das ist der Kern-Fix für den Lichttest.
 - **Connect-Baseline:** beim Verbinden ein `initializeCurrentOutputState`-Write senden:
-  flag2-Enable + light-on + Baseline-Lightbarfarbe (blau) + `RELEASE_LEDS` → sichtbarer blauer
+  flag2-Enable + light-on + Baseline-Lightbarfarbe (blau) → sichtbarer blauer
   Blitz bestätigt, dass Writes ankommen. Fehlschläge landen im Panel-Log.
+  (`RELEASE_LEDS`/flag1-Bit3 wird bewusst NICHT gesendet: es gibt die Player-LEDs an die
+  Firmware des Pads zurück — der Kernel hid-playstation.c setzt das Bit nie, RPCS3 nur auf
+  seinem Disconnect-Pfad; ein Senden beim Connect würde die LED-Baseline ausheben. M6-Ruling.)
 - `setLedBrightness(value)`: Brightness lebt in der `valid_flag2`-Region (led_brightness@42) und
   wird zusammen mit `flag2` bit1 (`LIGHTBAR_SETUP_CONTROL_ENABLE`) gesendet; es gibt kein
   flag1-Bit dafür (die alten `LED_BRIGHTNESS/LIGHTBAR_SETUP`-Flag1-Konstanten entfallen). UI:

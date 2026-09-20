@@ -7,7 +7,7 @@ import {
 } from './crc32';
 import { DS5Controller } from './ds5-controller';
 import { ControllerManager, createControllerForDevice } from './controller-manager';
-import type { HIDDeviceLike, HIDInputReportEvent } from './base-controller';
+import type { HIDDeviceLike } from './base-controller';
 
 /** Minimal fake HID device that records the last output/feature report sent. */
 function makeFakeDevice(): HIDDeviceLike & {
@@ -42,6 +42,32 @@ function makeFakeDevice(): HIDDeviceLike & {
     sent: typeof sent;
     lastOut: () => (typeof sent)[number] | undefined;
   };
+}
+
+/** Build a realistic 64-byte DS5 feature-report 0x20 buffer.
+ *  Byte 0 = report id (0x20), matching the WebHID convention the parser
+ *  expects. The Rust backend now returns the full buffer (rbuf[..n]) so
+ *  byte 0 IS the report id — this test guards against regressions. */
+function makeInfoReport(): ArrayBuffer {
+  const buf = new ArrayBuffer(64);
+  const v = new DataView(buf);
+  v.setUint8(0, 0x20); // report id
+  // buildDate "2024-05-01" (11 bytes at offset 1)
+  const bd = new TextEncoder().encode('2024-05-01 ');
+  new Uint8Array(buf, 1, 11).set(bd.subarray(0, 11));
+  // buildTime "10:30:00" (8 bytes at offset 12)
+  const bt = new TextEncoder().encode('10:30:00');
+  new Uint8Array(buf, 12, 8).set(bt);
+  v.setUint16(20, 2, true); // fwType
+  v.setUint16(22, 1, true); // swSeries
+  v.setUint32(24, 0xabcd, true); // hwInfo
+  v.setUint32(28, 0x15010400, true); // fwVersion → "21.01.04.00"
+  v.setUint16(44, 0x200, true); // updateVersion
+  v.setUint8(46, 0x42); // updateImageInfo
+  v.setUint32(48, 0x01020304, true); // sblFwVersion
+  v.setUint32(52, 0x05060708, true); // dspFwVersion
+  v.setUint32(56, 0x090a0b0c, true); // spiderDspFwVersion
+  return buf;
 }
 
 describe('crc32', () => {
@@ -186,6 +212,51 @@ describe('flag2 / lightbar_setup region (#111)', () => {
     expect(device.lastOut()!.data[42]).toBe(0); // not re-sent as 255
     expect(device.lastOut()!.data[44]).toBe(10);
   });
+
+  it('clears flag1 LIGHTBAR_COLOR + flag2 enable from the retained state after the send', async () => {
+    const device = makeFakeDevice();
+    const ctrl = new DS5Controller(device);
+    await ctrl.setLightbarColor(255, 0, 0);
+    const first = device.sent[0];
+    expect(first.reportId).toBe(0x02);
+    expect(first.data[1] & 0x04).toBe(0x04); // flag1 LIGHTBAR_COLOR gesendet
+    expect(first.data[38]).toBe(0x02); // flag2 LIGHTBAR_SETUP_CONTROL_ENABLE gesendet
+    // setVibration berührt weder flag1-Bit2 noch flag2 — der Folge-Report darf
+    // die beiden Bits also nicht erneut tragen (Post-Send-Clear im Retained-State).
+    await ctrl.setVibration(0, 0);
+    const second = device.lastOut()!;
+    expect(second.data[1] & 0x04).toBe(0);
+    expect(second.data[38]).toBe(0);
+  });
+});
+
+describe('resetLights sequence', () => {
+  it('sends the four 0x02 writes in order plus exactly one legacy 0x20, with the per-write flag bits', async () => {
+    const device = makeFakeDevice();
+    const ctrl = new DS5Controller(device);
+    await ctrl.resetLights();
+    const common = device.sent.filter((s: { reportId: number }) => s.reportId === 0x02);
+    expect(common).toHaveLength(4);
+    // [0] setLightbarColor(0,0,0): RGB 0/0/0 + flag1-Bit2 + flag2-Enable
+    expect(common[0].data[44]).toBe(0);
+    expect(common[0].data[45]).toBe(0);
+    expect(common[0].data[46]).toBe(0);
+    expect(common[0].data[1] & 0x04).toBe(0x04);
+    expect(common[0].data[38]).toBe(0x02);
+    // [1] setLightbarSetup('light-on'): lightbar_setup 0x00 + flag2-Enable
+    expect(common[1].data[41]).toBe(0x00); // LIGHT_ON
+    expect(common[1].data[38]).toBe(0x02);
+    // [2] setPlayerIndicator(0): player_leds 0 + flag1-Bit4
+    expect(common[2].data[43]).toBe(0);
+    expect(common[2].data[1] & 0x10).toBe(0x10);
+    // [3] setMuteLed(0): mute_led 0 + flag1-Bit0
+    expect(common[3].data[8]).toBe(0);
+    expect(common[3].data[1] & 0x01).toBe(0x01);
+    // Genau ein Legacy-0x20-Report (aus setPlayerIndicator), Payload 0.
+    const legacy = device.sent.filter((s: { reportId: number }) => s.reportId === 0x20);
+    expect(legacy).toHaveLength(1);
+    expect(legacy[0].data[0]).toBe(0);
+  });
 });
 
 describe('connect baseline + battery 0xF (#112)', () => {
@@ -224,6 +295,38 @@ describe('legacy 0x20 player-LED fallback (#114)', () => {
     const legacy = device.sent.find((s: { reportId: number }) => s.reportId === 0x20);
     expect(legacy).toBeDefined();
     expect(legacy!.data[0]).toBe(0b01010);
+  });
+
+  it('swallowed legacy failure: sendReport rejecting only for 0x20 still resolves success and the common report carries the pattern', async () => {
+    const device = makeFakeDevice();
+    const originalSend = device.sendReport.bind(device);
+    device.sendReport = async (reportId: number, data: BufferSource) => {
+      if (reportId === 0x20) throw new Error('legacy board rejects 0x20');
+      await originalSend(reportId, data);
+    };
+    const ctrl = new DS5Controller(device);
+    await expect(ctrl.setPlayerIndicator(0b01010)).resolves.toEqual({
+      success: true,
+      message: '',
+    });
+    const common = device.sent.find((s: { reportId: number }) => s.reportId === 0x02);
+    expect(common).toBeDefined();
+    expect(common!.data[43]).toBe(0b01010);
+  });
+
+  it('clamps the pattern to 0..31 in the common report AND the legacy 0x20 payload', async () => {
+    const device = makeFakeDevice();
+    const ctrl = new DS5Controller(device);
+    await ctrl.setPlayerIndicator(-5);
+    await ctrl.setPlayerIndicator(200);
+    const commons = device.sent.filter((s: { reportId: number }) => s.reportId === 0x02);
+    const legacy = device.sent.filter((s: { reportId: number }) => s.reportId === 0x20);
+    expect(commons).toHaveLength(2);
+    expect(legacy).toHaveLength(2);
+    expect(commons[0].data[43]).toBe(0);
+    expect(legacy[0].data[0]).toBe(0);
+    expect(commons[1].data[43]).toBe(31);
+    expect(legacy[1].data[0]).toBe(31); // last 0x20 payload, not .find
   });
 });
 
@@ -387,32 +490,6 @@ describe('createControllerForDevice', () => {
   });
 });
 
-/** Build a realistic 64-byte DS5 feature-report 0x20 buffer.
- *  Byte 0 = report id (0x20), matching the WebHID convention the parser
- *  expects. The Rust backend now returns the full buffer (rbuf[..n]) so
- *  byte 0 IS the report id — this test guards against regressions. */
-function makeInfoReport(): ArrayBuffer {
-  const buf = new ArrayBuffer(64);
-  const v = new DataView(buf);
-  v.setUint8(0, 0x20); // report id
-  // buildDate "2024-05-01" (11 bytes at offset 1)
-  const bd = new TextEncoder().encode('2024-05-01 ');
-  new Uint8Array(buf, 1, 11).set(bd.subarray(0, 11));
-  // buildTime "10:30:00" (8 bytes at offset 12)
-  const bt = new TextEncoder().encode('10:30:00');
-  new Uint8Array(buf, 12, 8).set(bt);
-  v.setUint16(20, 2, true); // fwType
-  v.setUint16(22, 1, true); // swSeries
-  v.setUint32(24, 0xabcd, true); // hwInfo
-  v.setUint32(28, 0x15010400, true); // fwVersion → "21.01.04.00"
-  v.setUint16(44, 0x200, true); // updateVersion
-  v.setUint8(46, 0x42); // updateImageInfo
-  v.setUint32(48, 0x01020304, true); // sblFwVersion
-  v.setUint32(52, 0x05060708, true); // dspFwVersion
-  v.setUint32(56, 0x090a0b0c, true); // spiderDspFwVersion
-  return buf;
-}
-
 describe('_getInfo feature-report parsing', () => {
   it('parses FW Version and build date from a 0x20 report with report-id at byte 0', async () => {
     const infoBuf = makeInfoReport();
@@ -491,9 +568,6 @@ describe('BT feature-flow gating (#120)', () => {
   });
 });
 
-// Keep tsc happy about the unused event type alias import in some configs.
-export type _UnusedHidEvent = HIDInputReportEvent;
-
 describe('adaptive trigger parametrik (#113)', () => {
   // Byte layout (kernel/Ohjurot/nondebug): R2 trigger effect @10–20, L2 @21–31.
   // setAdaptiveTrigger(left, right): first arg = LEFT trigger (offsets 21+),
@@ -530,6 +604,24 @@ describe('adaptive trigger parametrik (#113)', () => {
     expect(out.data[22]).toBe(12); // L2 param0 = frequency
     expect(out.data[23]).toBe(255); // force clamped
     expect(out.data[24]).toBe(30); // L2 param2 = start
+  });
+
+  it('off mode writes mode 0 and zero params for both triggers', async () => {
+    const device = makeFakeDevice();
+    const ctrl = new DS5Controller(device);
+    await ctrl.setAdaptiveTrigger(
+      { mode: 'off', start: 10, end: 20, force: 30 },
+      { mode: 'off', start: 40, end: 50, force: 60 }
+    );
+    const out = device.lastOut()!;
+    expect(out.data[10]).toBe(0x00); // mode RIGHT (R2 region)
+    expect(out.data[11]).toBe(0); // param0
+    expect(out.data[12]).toBe(0); // param1
+    expect(out.data[13]).toBe(0); // param2
+    expect(out.data[21]).toBe(0x00); // mode LEFT (L2 region)
+    expect(out.data[22]).toBe(0);
+    expect(out.data[23]).toBe(0);
+    expect(out.data[24]).toBe(0);
   });
 
   it('setVibration sets COMPATIBLE_VIBRATION and HAPTICS_SELECT together', async () => {

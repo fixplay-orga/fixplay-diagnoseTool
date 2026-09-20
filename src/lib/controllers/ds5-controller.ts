@@ -80,6 +80,9 @@ const DS5_VALID_FLAG1 = {
   MUTE_LED: 0x01,
   POWER_SAVE_MUTE: 0x02,
   LIGHTBAR_COLOR: 0x04,
+  // Deliberately NEVER sent: flag1 bit3 releases the player LEDs back to the
+  // pad's firmware (the kernel driver never sets it; RPCS3 uses it only on its
+  // disconnect path) — sending it at connect would undo our LED baseline.
   RELEASE_LEDS: 0x08,
   PLAYER_INDICATOR: 0x10,
   AUDIO_CONTROL2: 0x80,
@@ -104,6 +107,38 @@ const DS5_LIGHTBAR_SETUP = {
   LIGHT_ON: 0x00,
   LIGHT_OUT: 0x02,
 } as const;
+
+/** Clamp to an unsigned byte (adaptive-trigger parametrik values). */
+function clamp(n: number): number {
+  return Math.max(0, Math.min(255, Math.round(n)));
+}
+
+/**
+ * Mode-specific parametrik for the adaptive triggers (reference: daidr
+ * dualsense-tester TriggerEffect.vue): resistance → [start, force, 0],
+ * auto → [frequency, force, start], single (trigger effect) →
+ * [start, end, force], off → zeros. Keyed by the closed `mode` union of
+ * AdaptiveTriggerConfig — a mode added to the union without a row here is a
+ * compile error instead of a silent mode-0 write on the wire.
+ */
+const ADAPTIVE_TRIGGER_MODES: Record<
+  AdaptiveTriggerConfig['mode'],
+  { byte: number; params: (cfg: AdaptiveTriggerConfig) => [number, number, number] }
+> = {
+  off: { byte: DS5_TRIGGER_EFFECT_MODE.OFF, params: () => [0, 0, 0] },
+  resistance: {
+    byte: DS5_TRIGGER_EFFECT_MODE.RESISTANCE,
+    params: (cfg) => [clamp(cfg.start), clamp(cfg.force), 0],
+  },
+  auto: {
+    byte: DS5_TRIGGER_EFFECT_MODE.AUTO_TRIGGER,
+    params: (cfg) => [clamp(cfg.frequency ?? 0), clamp(cfg.force), clamp(cfg.start)],
+  },
+  single: {
+    byte: DS5_TRIGGER_EFFECT_MODE.TRIGGER,
+    params: (cfg) => [clamp(cfg.start), clamp(cfg.end), clamp(cfg.force)],
+  },
+};
 
 interface OutputState {
   validFlag0: number;
@@ -657,38 +692,18 @@ export class DS5Controller extends BaseController {
     right: AdaptiveTriggerConfig
   ): Promise<{ success: boolean; message: string }> {
     try {
-      const modeMap: Record<string, number> = {
-        off: DS5_TRIGGER_EFFECT_MODE.OFF,
-        single: DS5_TRIGGER_EFFECT_MODE.TRIGGER,
-        auto: DS5_TRIGGER_EFFECT_MODE.AUTO_TRIGGER,
-        resistance: DS5_TRIGGER_EFFECT_MODE.RESISTANCE,
-      };
-      const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(n)));
-      // Mode-specific parametrik (reference: daidr dualsense-tester TriggerEffect.vue):
-      // resistance → [start, force], auto → [frequency, force, start],
-      // single (trigger effect) → [start, end, force].
-      const params = (cfg: AdaptiveTriggerConfig): [number, number, number] => {
-        switch (cfg.mode) {
-          case 'resistance':
-            return [clamp(cfg.start), clamp(cfg.force), 0];
-          case 'auto':
-            return [clamp(cfg.frequency ?? 0), clamp(cfg.force), clamp(cfg.start)];
-          case 'single':
-            return [clamp(cfg.start), clamp(cfg.end), clamp(cfg.force)];
-          default:
-            return [0, 0, 0];
-        }
-      };
-      const [lp0, lp1, lp2] = params(left);
-      const [rp0, rp1, rp2] = params(right);
+      const leftMode = ADAPTIVE_TRIGGER_MODES[left.mode];
+      const rightMode = ADAPTIVE_TRIGGER_MODES[right.mode];
+      const [lp0, lp1, lp2] = leftMode.params(left);
+      const [rp0, rp1, rp2] = rightMode.params(right);
       const { validFlag0 } = this.currentOutputState;
       const outputStruct = new DS5OutputStruct({
         ...this.currentOutputState,
-        adaptiveTriggerLeftMode: modeMap[left.mode],
+        adaptiveTriggerLeftMode: leftMode.byte,
         adaptiveTriggerLeftParam0: lp0,
         adaptiveTriggerLeftParam1: lp1,
         adaptiveTriggerLeftParam2: lp2,
-        adaptiveTriggerRightMode: modeMap[right.mode],
+        adaptiveTriggerRightMode: rightMode.byte,
         adaptiveTriggerRightParam0: rp0,
         adaptiveTriggerRightParam1: rp1,
         adaptiveTriggerRightParam2: rp2,
@@ -813,10 +828,11 @@ export class DS5Controller extends BaseController {
 
   async setPlayerIndicator(pattern = 0): Promise<{ success: boolean; message: string }> {
     try {
+      const clampedPattern = Math.max(0, Math.min(31, pattern));
       const { validFlag1 } = this.currentOutputState;
       const outputStruct = new DS5OutputStruct({
         ...this.currentOutputState,
-        playerIndicator: Math.max(0, Math.min(31, pattern)),
+        playerIndicator: clampedPattern,
         validFlag1: validFlag1 | DS5_VALID_FLAG1.PLAYER_INDICATOR,
       });
       await this.sendOutputReport(outputStruct.pack(), 'set player indicator');
@@ -824,7 +840,7 @@ export class DS5Controller extends BaseController {
       // player LEDs from the dedicated report instead of the common one. Newer
       // boards reject it harmlessly, so a failure here is NOT fatal.
       try {
-        await this.device.sendReport(0x20, new Uint8Array([Math.max(0, Math.min(31, pattern))]));
+        await this.device.sendReport(0x20, new Uint8Array([clampedPattern]));
       } catch {
         // ignore legacy report errors
       }

@@ -101,8 +101,14 @@ export function validateBtInputCrc(report: Uint8Array): boolean {
 
 /** Fill the CRC32 trailer in place (same framing as validateBtInputCrc) —
  * used by the mock layer and the tests to build frames real hardware would
- * accept. */
+ * accept. Requires at least 5 bytes (4 trailer bytes + at least 1 body byte):
+ * shorter frames would make the trailer writes land on real head bytes, so a
+ * malformed call fails fast instead of corrupting the frame. The
+ * receiver-side gate remains the 77-byte check in validateBtInputCrc. */
 export function fillBtInputCrc(report: Uint8Array): void {
+  if (report.length < 5) {
+    throw new RangeError('BT input frame too short for the 4-byte CRC32 trailer');
+  }
   const end = report.length - 4;
   const c = crc32(report.subarray(0, end), [0xa1, 0x31]);
   report[end] = c & 0xff;
