@@ -60,7 +60,9 @@ describe('MicLevelMeter error localization (#125)', () => {
     render(MicLevelMeter, { props: { active: true } });
     await waitFor(() => {
       expect(
-        screen.getByText('Mikrofon-Zugriff verweigert. Bitte in den Browser-Einstellungen erlauben.')
+        screen.getByText(
+          'Mikrofon-Zugriff verweigert. Bitte in den Browser-Einstellungen erlauben.'
+        )
       ).toBeInTheDocument();
     });
   });

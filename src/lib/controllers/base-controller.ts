@@ -33,6 +33,8 @@ export interface NvStatus {
   locked: boolean | null;
   code: number;
   raw: number;
+  /** Present only on synthetic error statuses (see nvStatusError in ds5-controller.ts). */
+  error?: unknown;
 }
 
 export interface CalibResult {

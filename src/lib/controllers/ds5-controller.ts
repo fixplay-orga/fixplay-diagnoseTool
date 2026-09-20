@@ -281,6 +281,11 @@ function ds5Color(serialNumber: string): string {
   return colorMap[colorCode] ?? 'Unknown';
 }
 
+/** Synthetic error NvStatus (single source of the shape — BT fallback + queryNvStatus catch). */
+function nvStatusError(raw = 0, error?: unknown): NvStatus {
+  return { device: 'ds5', status: 'error', locked: null, code: 2, raw, ...(error !== undefined ? { error } : {}) };
+}
+
 export class DS5Controller extends BaseController {
   currentOutputState: OutputState;
   /** Monotonic counter for the Bluetooth output report tag (low nibble used). */
@@ -471,13 +476,11 @@ export class DS5Controller extends BaseController {
       if (buildDate.search(/ 2020| 2021/) != -1) disableBits |= 2;
 
       // BT (#120): the NVS query (0x80/0x81) is gated over Bluetooth — see
-      // requireUsb. Fall back to an error status here so the info read itself
-      // still succeeds over BT (active tests stay BT-capable); NVS state is
-      // only meaningful over USB anyway.
+      // requireUsb. Fall back to an error status (nvStatusError) here so the
+      // info read itself still succeeds over BT (active tests stay BT-capable);
+      // NVS state is only meaningful over USB anyway.
       const nv =
-        this.transport === 'bt'
-          ? ({ device: 'ds5', status: 'error', locked: null, code: 2, raw: 0 } as NvStatus)
-          : await this.queryNvStatus();
+        this.transport === 'bt' ? nvStatusError() : await this.queryNvStatus();
       const bdAddr = await this.getBdAddr();
       infoItems.push({ key: 'Bluetooth Address', value: bdAddr, cat: 'hw', isExtra: true });
 
@@ -658,7 +661,7 @@ export class DS5Controller extends BaseController {
         return { device: 'ds5', status: 'unknown', locked: null, code: 2, raw: ret };
       return { device: 'ds5', status: 'unknown', locked: null, code: ret, raw: ret };
     } catch (error) {
-      return { device: 'ds5', status: 'error', locked: null, code: 2, raw: 0, error } as NvStatus;
+      return nvStatusError(0, error);
     }
   }
 

@@ -31,8 +31,7 @@ describe('BT input CRC (#118, C1)', () => {
     frame[0] = 0x10 << 2;
     frame[1] = 0xff;
     fillBtInputCrc(frame);
-    const got =
-      frame[73] | (frame[74] << 8) | (frame[75] << 16) | (frame[76] << 24) >>> 0;
+    const got = frame[73] | (frame[74] << 8) | (frame[75] << 16) | ((frame[76] << 24) >>> 0);
     // 0x1b0f01ac = crc32([0xA1, 0x31] ++ frame[0..73]) — computed independently
     // from the CRC table (0xEDB88320 reflected). The previous (wrong) second
     // seed byte 0xB2 yields 0x92480a07 for the same frame — a value no real
@@ -52,8 +51,7 @@ describe('BT input CRC (#118, C1)', () => {
     const wire = new Uint8Array(78);
     wire[0] = 0x31; // DS5_BT_INPUT_REPORT_ID, re-prepended
     wire.set(frame.subarray(0, 73), 1);
-    const trailer =
-      frame[73] | (frame[74] << 8) | (frame[75] << 16) | ((frame[76] << 24) >>> 0);
+    const trailer = frame[73] | (frame[74] << 8) | (frame[75] << 16) | ((frame[76] << 24) >>> 0);
     expect(crc32(wire.subarray(0, 74), [0xa1])).toBe(trailer >>> 0);
   });
 
