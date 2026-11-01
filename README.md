@@ -240,3 +240,20 @@ This project is open source. Contributions, issues, and feature requests are wel
 - [daidr/dualsense-tester](https://github.com/daidr/dualsense-tester) — reference DualSense HID protocol implementation
 - [Console-Service-Tool](https://github.com/amoamare/Console-Service-Tool) — error-code database source
 - Built with [Tauri](https://tauri.app/) and [Svelte](https://svelte.dev/)
+
+## Fixplay repositories
+
+All Fixplay projects live in the
+[`fixplay-orga`](https://github.com/fixplay-orga) organization:
+
+| Repository | Purpose |
+|---|---|
+| [`fixplay-backend`](https://github.com/fixplay-orga/fixplay-backend) | Go backend: public API (:7000) and admin API (:7100) |
+| [`fixplay-frontend`](https://github.com/fixplay-orga/fixplay-frontend) | Customer shop and repair platform at fixplay.de (Nuxt 4) |
+| [`fixplay-frontend-admin`](https://github.com/fixplay-orga/fixplay-frontend-admin) | Admin dashboard and Android app |
+| [`fixplay-frontend-partners`](https://github.com/fixplay-orga/fixplay-frontend-partners) | Partner portal at partners.fixplay.de |
+| [`fixplay-diagnoseTool`](https://github.com/fixplay-orga/fixplay-diagnoseTool) | Desktop tool for NOR flash, UART and controller diagnostics |
+| [`ql700-printserver`](https://github.com/fixplay-orga/ql700-printserver) | Label printing server for the Brother QL-700 |
+
+Archived: [`fixplay-frontend-legacy`](https://github.com/fixplay-orga/fixplay-frontend-legacy),
+[`fixplay-backend-legacy`](https://github.com/fixplay-orga/fixplay-backend-legacy).
