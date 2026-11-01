@@ -35,7 +35,7 @@
         {$LL.whatsNew.body()}
       </p>
       <a
-        href="https://github.com/fabioudev/fixplay-diagnoseTool/releases/tag/v{$currentVersion}"
+        href="https://github.com/fixplay-orga/fixplay-diagnoseTool/releases/tag/v{$currentVersion}"
         target="_blank"
         rel="noopener"
         class="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 px-4 py-2 text-sm text-gray-200 transition-colors"

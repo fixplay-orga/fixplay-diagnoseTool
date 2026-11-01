@@ -45,7 +45,7 @@
 
       <div class="mt-4 flex justify-center gap-3">
         <a
-          href="https://github.com/fabioudev/fixplay-diagnoseTool"
+          href="https://github.com/fixplay-orga/fixplay-diagnoseTool"
           target="_blank"
           rel="noopener"
           class="flex items-center gap-1 text-xs text-teal-400 hover:text-teal-300"
@@ -54,7 +54,7 @@
           {$LL.about.github()}
         </a>
         <a
-          href="https://github.com/fabioudev/fixplay-diagnoseTool/releases"
+          href="https://github.com/fixplay-orga/fixplay-diagnoseTool/releases"
           target="_blank"
           rel="noopener"
           class="flex items-center gap-1 text-xs text-teal-400 hover:text-teal-300"
@@ -63,7 +63,7 @@
           {$LL.about.releases()}
         </a>
         <a
-          href="https://github.com/fabioudev/fixplay-diagnoseTool/wiki"
+          href="https://github.com/fixplay-orga/fixplay-diagnoseTool/wiki"
           target="_blank"
           rel="noopener"
           class="flex items-center gap-1 text-xs text-teal-400 hover:text-teal-300"

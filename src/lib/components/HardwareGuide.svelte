@@ -890,7 +890,7 @@
         </div>
 
         <a
-          href="https://github.com/fabioudev/fixplay-diagnoseTool/blob/main/docs/CH341A_GUIDE.md"
+          href="https://github.com/fixplay-orga/fixplay-diagnoseTool/blob/main/docs/CH341A_GUIDE.md"
           target="_blank"
           rel="noopener"
           class="inline-flex items-center gap-1 text-teal-400 hover:text-teal-300"

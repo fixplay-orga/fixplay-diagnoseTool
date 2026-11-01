@@ -3,7 +3,7 @@ pkgver=0.1.5
 pkgrel=1
 pkgdesc="Cross-platform diagnostic tool for gaming consoles"
 arch=('x86_64')
-url="https://github.com/fabioudev/fixplay-diagnoseTool"
+url="https://github.com/fixplay-orga/fixplay-diagnoseTool"
 license=('custom:unknown')
 depends=(
   'webkit2gtk-4.1'
@@ -21,7 +21,7 @@ conflicts=('fixplay-diagnosetool-bin')
 # makepkg strip it. Matches the -bin PKGBUILD's !strip and guarantees the
 # installed fixplay-tauri is byte-identical to the build output.
 options=('!strip')
-source=("fixplay-diagnoseTool-v${pkgver}.tar.gz::https://github.com/fabioudev/fixplay-diagnoseTool/archive/refs/tags/v${pkgver}.tar.gz")
+source=("fixplay-diagnoseTool-v${pkgver}.tar.gz::https://github.com/fixplay-orga/fixplay-diagnoseTool/archive/refs/tags/v${pkgver}.tar.gz")
 sha256sums=('SKIP')
 
 prepare() {

@@ -49,7 +49,7 @@
         >{$LL.update.managedHint({ hint: hint || $LL.update.packageManager() })}</span
       >
       <a
-        href="https://github.com/fabioudev/fixplay-diagnoseTool/releases"
+        href="https://github.com/fixplay-orga/fixplay-diagnoseTool/releases"
         target="_blank"
         rel="noopener"
         class="px-2.5 py-1 rounded-md bg-emerald-600/30 hover:bg-emerald-600/50 border border-emerald-500/40 transition-colors shrink-0"
@@ -57,7 +57,7 @@
       >
     {:else}
       <a
-        href="https://github.com/fabioudev/fixplay-diagnoseTool/releases/tag/v{$updateAvailable.version}"
+        href="https://github.com/fixplay-orga/fixplay-diagnoseTool/releases/tag/v{$updateAvailable.version}"
         target="_blank"
         rel="noopener"
         class="text-emerald-300/80 hover:text-emerald-200 underline shrink-0 hidden sm:inline"

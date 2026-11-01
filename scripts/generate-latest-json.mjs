@@ -15,7 +15,7 @@
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 
-const REPO = 'fabioudev/fixplay-diagnoseTool';
+const REPO = 'fixplay-orga/fixplay-diagnoseTool';
 const RELEASE_BASE = `https://github.com/${REPO}/releases/download`;
 
 const assetsDir = process.argv[2];

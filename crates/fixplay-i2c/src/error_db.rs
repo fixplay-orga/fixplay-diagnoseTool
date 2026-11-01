@@ -27,7 +27,7 @@ use std::path::Path;
 /// returned 404, so every "DB aktualisieren" failed. Self-hosting the bundled
 /// baseline on the project's default branch means the refresh channel actually
 /// resolves and tracks the file the app already ships.
-const DB_URL: &str = "https://raw.githubusercontent.com/fabioudev/fixplay-diagnoseTool/main/src-tauri/resources/xbox_error_codes.json";
+const DB_URL: &str = "https://raw.githubusercontent.com/fixplay-orga/fixplay-diagnoseTool/main/src-tauri/resources/xbox_error_codes.json";
 
 /// One Xbox error code with its description and category.
 #[derive(Debug)]
