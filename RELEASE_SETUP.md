@@ -48,7 +48,7 @@ cat ~/.ssh/aur_deploy.pub
 # 3. Private Key zu GitHub Secret hinzufügen
 cat ~/.ssh/aur_deploy
 # ^ kopieren und als `AUR_SSH_PRIVATE_KEY` Secret hinzufügen
-# https://github.com/fabioudev/fixplay-diagnoseTool/settings/secrets/actions
+# https://github.com/fixplay-orga/fixplay-diagnoseTool/settings/secrets/actions
 ```
 
 ### Schritt 2: AUR Repository + GitHub-Environment
@@ -57,7 +57,7 @@ cat ~/.ssh/aur_deploy
    Release automatisch an `fixplay-diagnosetool-bin` und `fixplay-diagnosetool`,
    und AUR legt die Repos beim ersten Push an.
 2. Lege in GitHub ein **Environment** namens `aur-release` an:
-   https://github.com/fabioudev/fixplay-diagnoseTool/settings/environments
+   https://github.com/fixplay-orga/fixplay-diagnoseTool/settings/environments
    (kann leer bleiben; dient nur als Gate für den AUR-Job. Später lassen sich
    hier Required Reviewers hinterlegen.)
 
@@ -69,7 +69,7 @@ Bundles signiert sein. Ein Schlüsselpaar liegt lokal in
 
 1. **Private Key** — Inhalt von `.updater-keys/fp.key` als GitHub-Secret
    `TAURI_SIGNING_PRIVATE_KEY`:
-   https://github.com/fabioudev/fixplay-diagnoseTool/settings/secrets/actions
+   https://github.com/fixplay-orga/fixplay-diagnoseTool/settings/secrets/actions
 2. **Passwort** — `fixplay-diagnoseTool-updater-2026` als Secret
    `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
 
@@ -121,7 +121,7 @@ git push origin v0.1.0
 
 **Workflow-Status ansehen:**
 
-1. Gehe zu: https://github.com/fabioudev/fixplay-diagnoseTool/actions
+1. Gehe zu: https://github.com/fixplay-orga/fixplay-diagnoseTool/actions
 2. Wähle das Release-Workflow
 3. Klicke auf den Build
 4. Siehe "update-aur" Job für Details

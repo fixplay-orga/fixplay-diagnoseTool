@@ -27,7 +27,7 @@ cat ~/.ssh/aur_deploy.pub
 cat ~/.ssh/aur_deploy
 ```
 
-1. Gehe zu: https://github.com/fabioudev/fixplay-diagnoseTool/settings/secrets/actions
+1. Gehe zu: https://github.com/fixplay-orga/fixplay-diagnoseTool/settings/secrets/actions
 2. "New repository secret" klicken
 3. Name: `AUR_SSH_PRIVATE_KEY`
 4. Value: Komplett paste den Output aus `cat ~/.ssh/aur_deploy`
@@ -47,7 +47,7 @@ Das Ergebnis (nur die Zeile mit `aur.archlinux.org`) speichere ich ggf. auch als
 
 Der `update-aur`-Job läuft im Environment `aur-release` (als Gate, ggf. später
 für Required Reviewers). Lege es einmalig an:
-https://github.com/fabioudev/fixplay-diagnoseTool/settings/environments →
+https://github.com/fixplay-orga/fixplay-diagnoseTool/settings/environments →
 "New environment" → Name `aur-release` (kann leer bleiben).
 
 ## Schritt 6: AUR-Pakete nicht manuell anlegen

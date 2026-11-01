@@ -488,7 +488,7 @@ jobs:
             echo "pkgrel=1"
             echo 'pkgdesc="Cross-platform diagnostic tool for gaming consoles"'
             echo "arch=('x86_64')"
-            echo 'url="https://github.com/fabioudev/fixplay-diagnoseTool"'
+            echo 'url="https://github.com/fixplay-orga/fixplay-diagnoseTool"'
             echo "license=('custom:unknown')"
             echo "depends=('webkit2gtk-4.1' 'gtk3' 'libayatana-appindicator' 'flashrom')"
             echo "provides=('fixplay-diagnosetool')"

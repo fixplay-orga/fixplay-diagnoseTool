@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-REPO="fabioudev/fixplay-diagnoseTool"
+REPO="fixplay-orga/fixplay-diagnoseTool"
 PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixplay-diagnosetool-bin"
 PKGBUILD="$PACKAGE_DIR/PKGBUILD"
 

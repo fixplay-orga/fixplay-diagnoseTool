@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="fabioudev/fixplay-diagnoseTool"
+REPO="fixplay-orga/fixplay-diagnoseTool"
 INSTALL_NAME="fixplay-diagnosetool"
 
 echo "==> Neueste Version ermitteln..."

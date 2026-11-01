@@ -71,7 +71,7 @@ Read, validate, and archive NOR flash dumps. Live UART error-code diagnostics. D
 
 ### Prebuilt Downloads
 
-Download the latest release from [GitHub Releases](https://github.com/fabioudev/fixplay-diagnoseTool/releases):
+Download the latest release from [GitHub Releases](https://github.com/fixplay-orga/fixplay-diagnoseTool/releases):
 
 | Platform                  | Package                          |
 | ------------------------- | -------------------------------- |
@@ -107,7 +107,7 @@ sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libudev-dev \
   libayatana-appindicator3-dev librsvg2-dev patchelf
 
 # Clone and build
-git clone https://github.com/fabioudev/fixplay-diagnoseTool.git
+git clone https://github.com/fixplay-orga/fixplay-diagnoseTool.git
 cd fixplay-diagnoseTool
 npm install
 npm run tauri build
