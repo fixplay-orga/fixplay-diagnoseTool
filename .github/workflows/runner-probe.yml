@@ -46,3 +46,13 @@ jobs:
         run: |
           ls -l /var/run/docker.sock 2>&1 || echo "no docker socket"
           docker version 2>&1 | head -5 || true
+
+  hosted-probe:
+    # Fragt ab, ob GitHub-hosted Runner (ubuntu-latest) aktuell überhaupt
+    # starten — entscheidet, ob release auf arch-build warten kann.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hosted runner reachable
+        run: |
+          uname -a
+          echo "hosted runner started"
