@@ -19,6 +19,10 @@ permissions:
 
 jobs:
   update-aur:
+    # Bleibt GitHub-hosted: der Job läuft in `container: archlinux:latest` und
+    # braucht dafür einen Docker-Daemon, den der self-hosted Runner (ARC-Pod)
+    # nicht hat. makepkg gibt es nur auf Arch, also keine Umstellung ohne
+    # Docker-Daemon — solange das Billing blockiert, läuft dieser Job nicht.
     runs-on: ubuntu-latest
     environment: aur-release
     container:
