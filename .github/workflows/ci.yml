@@ -7,9 +7,13 @@ name: CI
 # oder fremde Architekturen brauchen, bleiben in release.yml/aur-publish.yml
 # auf GitHub-hosted Runnern.
 #
+# FORK-SCHUTZ: Das Repo ist öffentlich. Pull Requests aus Forks laufen deshalb
+# NICHT auf unserem Runner (der würde beliebigen fremden Code ausführen),
+# sondern auf ubuntu-latest — für öffentliche Repos sind die Minuten frei.
+# Pushes auf main und PRs aus Branches dieses Repos nutzen den Runner.
+#
 # VORAUSSETZUNG: der Repo muss in der Runner-Gruppe des ARC-Runners freigegeben
-# sein, sonst bleiben diese Jobs dauerhaft `queued` (am 16.11.2026 war genau das
-# der Fall — siehe PR-Beschreibung; Lösung ist ein Org-Admin-Schritt).
+# sein, sonst bleiben die Runner-Jobs dauerhaft `queued` (ein Org-Admin-Schritt).
 
 on:
   push:
@@ -19,7 +23,7 @@ on:
 
 jobs:
   frontend:
-    runs-on: [self-hosted, linux, fixplay]
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "fixplay"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -32,7 +36,7 @@ jobs:
       - run: npm run build
 
   rust:
-    runs-on: [self-hosted, linux, fixplay]
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "fixplay"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -56,7 +60,7 @@ jobs:
       - run: cargo clippy --workspace -- -D warnings
 
   audit:
-    runs-on: [self-hosted, linux, fixplay]
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "fixplay"]') }}
     continue-on-error: true # advisory only — transitive dep vulns are out of our control
     steps:
       - uses: actions/checkout@v4

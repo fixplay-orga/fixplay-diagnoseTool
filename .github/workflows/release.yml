@@ -22,6 +22,8 @@ name: Release
 #
 # VORAUSSETZUNG wie in ci.yml: der Repo muss in der ARC-Runner-Gruppe
 # freigegeben sein, sonst bleiben prepare/build-linux/release `queued`.
+# Fork-Schutz ist hier nicht nötig: der Workflow startet nur auf Tags und per
+# workflow_dispatch, also ausschließlich aus diesem Repo (kein `pull_request`).
 
 on:
   push:
