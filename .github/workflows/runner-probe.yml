@@ -1,0 +1,48 @@
+# TEMPORARY probe — not part of the final PR. Pushes to ci/self-hosted-runner
+# only; it records what the self-hosted runner actually provides so the Tauri
+# workflows can install exactly the missing pieces.
+name: Runner probe
+
+on:
+  push:
+    branches: [ci/self-hosted-runner]
+
+jobs:
+  probe:
+    runs-on: [self-hosted, linux, fixplay]
+    steps:
+      - name: Identity and OS
+        run: |
+          id
+          uname -a
+          cat /etc/os-release
+          echo "nproc=$(nproc)"
+          free -h
+          df -h /
+
+      - name: Toolchain
+        run: |
+          for t in sudo apt-get node npm npx rustc cargo gh git pkg-config make gcc g++ cmake; do
+            printf '%-12s ' "$t"
+            command -v "$t" || echo MISSING
+          done
+          node -v 2>/dev/null || true
+          npm -v 2>/dev/null || true
+          rustc -V 2>/dev/null || true
+          cargo -V 2>/dev/null || true
+          git --version 2>/dev/null || true
+          gh --version 2>/dev/null | head -1 || true
+          if sudo -n true 2>/dev/null; then echo "sudo: passwordless OK"; else echo "sudo: NOT available"; fi
+
+      - name: Tauri system libraries
+        run: |
+          for p in libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+                   librsvg2-dev libudev-dev patchelf libssl-dev build-essential \
+                   libusb-1.0-0-dev squashfs-tools libfuse2 fuse pkg-config; do
+            if dpkg -s "$p" >/dev/null 2>&1; then echo "installed  $p"; else echo "MISSING    $p"; fi
+          done
+
+      - name: Docker socket
+        run: |
+          ls -l /var/run/docker.sock 2>&1 || echo "no docker socket"
+          docker version 2>&1 | head -5 || true
