@@ -303,6 +303,10 @@ jobs:
 
       - name: Build Tauri bundles
         env:
+          # linuxdeploy ist selbst ein AppImage. Ohne FUSE (self-hosted
+          # Runner-Pod) muss es entpackt statt gemountet laufen, sonst endet
+          # der AppImage-Build mit "failed to run linuxdeploy".
+          APPIMAGE_EXTRACT_AND_RUN: "1"
           # When set, Tauri signs the updater bundles and emits .sig files
           # (required for the in-app updater to verify downloads). If the
           # secrets are absent the build still succeeds — just without sigs.
@@ -479,6 +483,7 @@ jobs:
 
       - name: Build Tauri bundles
         env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri build ${{ matrix.build_args }}
