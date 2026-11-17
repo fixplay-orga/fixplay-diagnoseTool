@@ -39,7 +39,11 @@ jobs:
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "fixplay"]') }}
     steps:
       - uses: actions/checkout@v4
+      # clippy ist auf dem self-hosted Runner nicht vorinstalliert (auf
+      # ubuntu-latest schon), deshalb explizit als Toolchain-Komponente.
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - name: Install Tauri system dependencies
         # libwebkit2gtk-4.1-dev is the marker: if it is present, an earlier run
         # on this long-lived runner already installed the rest, so skip the slow
