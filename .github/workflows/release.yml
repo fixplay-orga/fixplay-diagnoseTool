@@ -84,10 +84,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64 läuft auf dem self-hosted Runner (kein Docker-Daemon
-          # nötig — die AppImage-Tooling-AppImages werden mit
-          # APPIMAGE_EXTRACT_AND_RUN=1 ohne FUSE entpackt).
-          - runner: [self-hosted, linux, fixplay]
+          # Linux x86_64 bleibt GitHub-hosted: Tauris AppImage-Bundling ruft
+          # linuxdeploy auf, das im FUSE-losen self-hosted Pod auch mit
+          # APPIMAGE_EXTRACT_AND_RUN=1 mit "failed to run linuxdeploy" endet
+          # (v0.4.2-v0.4.5 belegt). Das Repo ist public, hosted Minuten sind
+          # kostenlos; schnelle CI-Feedback-Läufe bleiben auf dem Runner.
+          - runner: ubuntu-latest
             artifact_name: linux-bundles
             build_args: -- --bundles appimage,deb,rpm
             artifact_glob: |
