@@ -274,7 +274,13 @@ jobs:
           cd /tmp/flashrom
           # Same programmer set as the Windows build (see the MSYS2 step for
           # the full rationale) and the same loud-failure philosophy.
+          # WARNERROR=no: flashrom 1.4.0 kompiliert mit dem neueren GCC im
+          # self-hosted Runner-Pod nicht unter -Werror (layout.c: "assignment
+          # discards 'const' qualifier"), auf ubuntu-latest schon. flashrom
+          # dokumentiert dafür ausdrücklich `make WARNERROR=no`; unser eigener
+          # Code wird weiterhin über die Rust-CI mit -D warnings geprüft.
           make \
+            WARNERROR=no \
             CONFIG_INTERNAL=no \
             CONFIG_SERPROG=yes \
             CONFIG_BUSPIRATE_SPI=yes \
