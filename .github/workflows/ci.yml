@@ -1,5 +1,20 @@
 name: CI
 
+# Self-hosted Runner der Fixplay-Box (Labels: self-hosted, linux, fixplay).
+# Alle Jobs hier laufen auf dem Linux-x64-Runner: kein Docker-Daemon nötig, die
+# Tauri-Systempakete werden explizit installiert (idempotent: ein zweiter Lauf
+# auf dem langlebigen Runner installiert nichts). Jobs, die einen Docker-Daemon
+# oder fremde Architekturen brauchen, bleiben in release.yml/aur-publish.yml
+# auf GitHub-hosted Runnern.
+#
+# FORK-SCHUTZ: Das Repo ist öffentlich. Pull Requests aus Forks laufen deshalb
+# NICHT auf unserem Runner (der würde beliebigen fremden Code ausführen),
+# sondern auf ubuntu-latest — für öffentliche Repos sind die Minuten frei.
+# Pushes auf main und PRs aus Branches dieses Repos nutzen den Runner.
+#
+# VORAUSSETZUNG: der Repo muss in der Runner-Gruppe des ARC-Runners freigegeben
+# sein, sonst bleiben die Runner-Jobs dauerhaft `queued` (ein Org-Admin-Schritt).
+
 on:
   push:
     branches: [main]
@@ -8,7 +23,7 @@ on:
 
 jobs:
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "fixplay"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,16 +36,35 @@ jobs:
       - run: npm run build
 
   rust:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "fixplay"]') }}
     steps:
       - uses: actions/checkout@v4
+      # clippy ist auf dem self-hosted Runner nicht vorinstalliert (auf
+      # ubuntu-latest schon), deshalb explizit als Toolchain-Komponente.
       - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libudev-dev libayatana-appindicator3-dev librsvg2-dev
+        with:
+          components: clippy
+      - name: Install Tauri system dependencies
+        # libwebkit2gtk-4.1-dev is the marker: if it is present, an earlier run
+        # on this long-lived runner already installed the rest, so skip the slow
+        # apt index refresh. sudo is only used when the job is not already root.
+        run: |
+          if dpkg -s libwebkit2gtk-4.1-dev libgtk-3-dev libudev-dev >/dev/null 2>&1; then
+            echo "Tauri system dependencies already installed"
+            exit 0
+          fi
+          SUDO=""
+          if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
+          $SUDO apt-get update
+          $SUDO apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libudev-dev libusb-1.0-0-dev
       - run: cargo test --workspace
       - run: cargo clippy --workspace -- -D warnings
 
   audit:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "fixplay"]') }}
     continue-on-error: true # advisory only — transitive dep vulns are out of our control
     steps:
       - uses: actions/checkout@v4
