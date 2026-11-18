@@ -28,6 +28,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # File logging for release builds (rolling daily log file under the app's
 # local-data dir); only loaded in non-debug builds via the `file-logging` code.
 tracing-appender = "0.2"
+# RFC3339-Zeitstempel für das JSON-Log-Schema (ts).
+time = { version = "0.3", features = ["formatting"] }
 dirs             = "6"
 anyhow        = { workspace = true }
 serialport    = "4"
