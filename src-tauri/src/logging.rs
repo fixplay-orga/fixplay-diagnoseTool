@@ -255,11 +255,7 @@ struct JsonVisitor<'a> {
 
 impl JsonVisitor<'_> {
     fn insert(&mut self, field: &tracing::field::Field, value: Value) {
-        let key = match field.name() {
-            "message" => "message",
-            other => other,
-        };
-        self.map.insert(key.to_string(), value);
+        self.map.insert(field.name().to_string(), value);
     }
 }
 
